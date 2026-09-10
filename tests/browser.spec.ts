@@ -45,6 +45,29 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   });
   await page.goto("/");
   await ready(page);
+  for (const value of [0, 0.5, 0.999999]) {
+    await page.evaluate((v) => {
+      const random = Math.random;
+      try {
+        Math.random = () => v;
+        (document.querySelector("#sample") as HTMLButtonElement).click();
+      } finally {
+        Math.random = random;
+      }
+    }, value);
+    await ready(page);
+    const points = (await debug(page)).strokes[0].points;
+    expect(points.length).toBe(4 + Math.floor(value * 9));
+    expect(
+      points.every(
+        (p: any) => p.x >= 0 && p.x <= 1600 && p.y >= 0 && p.y <= 1100,
+      ),
+    ).toBe(true);
+    expect(points[0].x).toBeCloseTo(1600 * (0.05 + value * 0.9));
+    expect(points[0].y).toBeCloseTo(1100 * (0.05 + value * 0.9));
+  }
+  await page.locator("#sample").click();
+  await ready(page);
   for (const kind of ["catmull", "bspline", "centripetal", "natural", "tcb"]) {
     await page.locator("#kind").selectOption(kind);
     await ready(page);
@@ -109,14 +132,40 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   await page.locator("#numbers").uncheck();
   expect(await page.locator(".point-number").count()).toBe(0);
   await page.locator("#numbers").check();
-  await page.locator("#tool-source").click();
-  await page.mouse.click(
-    rect.x + 0.25 * rect.width,
-    rect.y + 0.5 * rect.height,
+  await expect(page.locator("#tool-source")).toHaveCount(0);
+  await expect(page.locator("#load")).toContainText("画像を選択");
+  await expect(page.locator("#export")).toHaveText("エクスポート ↓");
+  await page.mouse.move(rect.x + 0.15 * rect.width, rect.y + 0.3 * rect.height);
+  await page.mouse.down();
+  await page.mouse.move(rect.x + 0.2 * rect.width, rect.y + 0.4 * rect.height, {
+    steps: 4,
+  });
+  await page.mouse.up();
+  await ready(page);
+  let st = (await debug(page)).strokes[0];
+  expect(st.source.x).toBe(st.points[0].x);
+  expect(st.source.y).toBe(st.points[0].y);
+  await page.mouse.dblclick(
+    rect.x + 0.2 * rect.width,
+    rect.y + 0.4 * rect.height,
   );
   await ready(page);
-  expect((await debug(page)).strokes[0].source.x).toBeCloseTo(400, 0);
-  await page.locator("#tool-points").click();
+  st = (await debug(page)).strokes[0];
+  expect(st.source.x).toBe(st.points[0].x);
+  expect(st.source.y).toBe(st.points[0].y);
+  await page.locator("#undo").click();
+  await ready(page);
+  await page.locator("#angle").fill("45");
+  await ready(page);
+  await page.locator("#source-length").fill("200");
+  await ready(page);
+  st = (await debug(page)).strokes[0];
+  expect(st.source).toEqual({
+    x: st.points[0].x,
+    y: st.points[0].y,
+    angle: 45,
+    length: 200,
+  });
   await page.locator("#mode-b").click();
   await ready(page);
   await page.evaluate(() => {
@@ -168,13 +217,11 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   await ready(page);
   const replay = await download(page, "spline-smudge-replay");
   expect(replay.bytes.equals(a.bytes)).toBe(true);
-  await page
-    .locator("#file")
-    .setInputFiles({
-      name: "transparent.png",
-      mimeType: "image/png",
-      buffer: await fixture(page),
-    });
+  await page.locator("#file").setInputFiles({
+    name: "transparent.png",
+    mimeType: "image/png",
+    buffer: await fixture(page),
+  });
   await ready(page);
   await expect(page.locator("#image-name")).toHaveText("transparent.png");
   await page.locator("#resolution").selectOption("original");
@@ -219,13 +266,11 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
     exif,
     jpg.subarray(2),
   ]);
-  await page
-    .locator("#file")
-    .setInputFiles({
-      name: "rotated.jpg",
-      mimeType: "image/jpeg",
-      buffer: rotated,
-    });
+  await page.locator("#file").setInputFiles({
+    name: "rotated.jpg",
+    mimeType: "image/jpeg",
+    buffer: rotated,
+  });
   await expect(page.locator("#image-name")).toHaveText("rotated.jpg");
   await ready(page);
   await expect(page.locator("#image-size")).toHaveText("100 × 160");
@@ -233,13 +278,11 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   await ready(page);
   const portrait = await download(page, "spline-smudge-rotated");
   expect([portrait.width, portrait.height]).toEqual([100, 160]);
-  await page
-    .locator("#file")
-    .setInputFiles({
-      name: "invalid.png",
-      mimeType: "image/png",
-      buffer: Buffer.from("not an image"),
-    });
+  await page.locator("#file").setInputFiles({
+    name: "invalid.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("not an image"),
+  });
   await expect(page.locator("#status")).toContainText("JPGまたはPNG");
   await expect(page.locator("#image-name")).toHaveText("rotated.jpg");
   await page.evaluate(() => {

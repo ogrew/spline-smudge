@@ -22,7 +22,7 @@ const range = (
 ) =>
   `<label class="range-label" for="${id}">${label}<output id="${id}-value"></output></label><input id="${id}" type="range" min="${min}" max="${max}" step="${step}">`;
 document.querySelector("#app")!.innerHTML = `
-<header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">写真を開く <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>PNGを書き出す ↓</button></div></header>
+<header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">画像を選択 <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>エクスポート ↓</button></div></header>
 <main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>色の動き</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯<small>採取した色を伸ばす</small></span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>引きずる<small>通り道の色を拾う</small></span></button></div><p id="mode-note" class="note"></p><div id="pickup-group">${range("pickup", "色を拾う量", 0, 1, 0.01)}</div></section>
 <section><div class="section-title">02 <h2>スプライン</h2></div><div class="stroke-row"><span class="dot"></span><span>Stroke 01</span><span class="muted">編集中</span></div><label class="sr-only" for="kind">スプラインの種類</label><select id="kind">${Object.entries(
   kinds,
@@ -31,8 +31,8 @@ document.querySelector("#app")!.innerHTML = `
   .join(
     "",
   )}</select><p class="note" id="curve-note"></p><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 500, 1)}<p class="micro">pxは元写真の座標基準。出力サイズに合わせて比例します。</p><div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">線を消す</button></div></section>
-<section><div class="section-title">03 <h2>色の採取</h2></div><div class="tools"><button id="tool-points" aria-pressed="true">点を編集</button><button id="tool-source" aria-pressed="false">採取線を移動</button></div><p class="note">黄色の線が色の採取範囲です。採取線を移動するモードでは、写真のクリックで位置を、両端のドラッグで角度と長さを変えられます。</p>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}<button id="source-start" class="subtle">線の始点から採取</button></section>
-<section><div class="section-title">04 <h2>画像と出力</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px · A4の目安</option><option value="5000">5000 px · A3の目安</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label><p class="micro">JPG / PNG入力 → sRGB・8bit PNG出力<br>画像はこのブラウザ内だけで処理します。</p></section></fieldset></aside>
+<section><div class="section-title">03 <h2>色の採取</h2></div><p class="note">黄色の採取線は常に線の始点が中心です。角度と採取する長さを調整できます。</p>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
+<section><div class="section-title">04 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px · A4の目安</option><option value="5000">5000 px · A3の目安</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label><p class="micro">JPG / PNG入力 → sRGB・8bit PNG出力<br>画像はこのブラウザ内だけで処理します。</p></section></fieldset></aside>
 <div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="numbers" type="checkbox" checked>番号</label><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
 
 let renderer: Renderer;
@@ -50,8 +50,7 @@ let iw = 1600,
 let source: CanvasImageSource,
   originalFile: File | null = null,
   sourceBitmap: ImageBitmap | null = null;
-let mode: "points" | "source" = "points",
-  numbers = true,
+let numbers = true,
   guides = true;
 let zoom = 1,
   pan = { x: 0, y: 0 },
@@ -120,9 +119,6 @@ function sync() {
   const s = size();
   $("dimensions").textContent =
     `${s.width} × ${s.height} px · 元の縦横比を維持`;
-  $("tool-points").setAttribute("aria-pressed", String(mode === "points"));
-  $("tool-source").setAttribute("aria-pressed", String(mode === "source"));
-  $("stage").classList.toggle("source-tool", mode === "source");
   $("empty-hint").hidden = stroke().points.length > 0;
   overlay();
 }
@@ -142,7 +138,7 @@ function overlay() {
       `<polyline class="centerline" points="${sampled.map((p) => `${p.x},${p.y}`).join(" ")}"/>`,
     );
   }
-  if (guides || mode === "source") {
+  if (guides && pts.length > 0) {
     const s = stroke().source,
       a = (s.angle * Math.PI) / 180,
       dx = (Math.cos(a) * s.length) / 2,
@@ -195,6 +191,11 @@ function layout() {
   overlay();
 }
 function requestRender() {
+  const first = stroke().points[0];
+  if (first) {
+    stroke().source.x = first.x;
+    stroke().source.y = first.y;
+  }
   revision++;
   queued = true;
   completedRevision = -1;
@@ -251,12 +252,15 @@ function edit(change: () => void) {
   requestRender();
 }
 function randomPoints() {
-  stroke().points = Array.from({ length: 5 }, (_, i) => ({
-    id: crypto.randomUUID(),
-    x: iw * (0.12 + i * 0.18 + (Math.random() - 0.5) * 0.09),
-    y: ih * (0.22 + Math.random() * 0.56),
-    factor: 0.5 + Math.random() * 1.3,
-  }));
+  stroke().points = Array.from(
+    { length: 4 + Math.floor(Math.random() * 9) },
+    () => ({
+      id: crypto.randomUUID(),
+      x: iw * (0.05 + Math.random() * 0.9),
+      y: ih * (0.05 + Math.random() * 0.9),
+      factor: 0.5 + Math.random() * 1.3,
+    }),
+  );
   selected = stroke().points[2].id;
   const first = stroke().points[0];
   stroke().source.x = first.x;
@@ -359,14 +363,6 @@ $("clear").onclick = () =>
     stroke().points = [];
     selected = null;
   });
-$("source-start").onclick = () =>
-  edit(() => {
-    const p = stroke().points[0];
-    if (p) {
-      stroke().source.x = p.x;
-      stroke().source.y = p.y;
-    }
-  });
 $("undo").onclick = () => {
   if (exporting) return;
   state = history.undo(state);
@@ -380,11 +376,6 @@ $("redo").onclick = () => {
   requestRender();
   layout();
 };
-for (const t of ["points", "source"] as const)
-  $(`tool-${t}`).onclick = () => {
-    mode = t;
-    sync();
-  };
 $("numbers").onchange = () => {
   numbers = $<HTMLInputElement>("numbers").checked;
   overlay();
@@ -432,9 +423,8 @@ const nearest = (p: { x: number; y: number }) =>
     (q) => Math.hypot(q.x - p.x, q.y - p.y) < 11 / ((size().width / iw) * zoom),
   );
 let drag: null | {
-  type: "point" | "source" | "end" | "pan";
+  type: "point" | "pan";
   id?: string;
-  sign?: number;
   start: { x: number; y: number };
   pan: { x: number; y: number };
 } = null;
@@ -448,27 +438,7 @@ $("stage").addEventListener("pointerdown", (event) => {
       start: { x: event.clientX, y: event.clientY },
       pan: { ...pan },
     };
-  } else if (mode === "source" && inside(p)) {
-    history.push(state);
-    const s = stroke().source,
-      a = (s.angle * Math.PI) / 180;
-    let sign: number | undefined;
-    for (const k of [-1, 1])
-      if (
-        Math.hypot(
-          p.x - s.x - ((Math.cos(a) * s.length) / 2) * k,
-          p.y - s.y - ((Math.sin(a) * s.length) / 2) * k,
-        ) <
-        12 / ((size().width / iw) * zoom)
-      )
-        sign = k;
-    drag = { type: sign ? "end" : "source", sign, start: p, pan };
-    if (!sign) {
-      s.x = p.x;
-      s.y = p.y;
-      requestRender();
-    }
-  } else if (mode === "points") {
+  } else {
     const existing = nearest(p);
     if (existing) {
       selected = existing.id;
@@ -510,15 +480,6 @@ $("stage").addEventListener("pointermove", (event) => {
       q.x = p.x;
       q.y = p.y;
     }
-  } else if (drag.type === "source") {
-    stroke().source.x = p.x;
-    stroke().source.y = p.y;
-  } else {
-    const s = stroke().source,
-      dx = (p.x - s.x) * drag.sign!,
-      dy = (p.y - s.y) * drag.sign!;
-    s.angle = (Math.atan2(dy, dx) * 180) / Math.PI;
-    s.length = Math.max(1, Math.hypot(dx, dy) * 2);
   }
   requestRender();
 });
@@ -527,7 +488,7 @@ for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
     drag = null;
   });
 $("stage").addEventListener("dblclick", (event) => {
-  if (exporting || mode !== "points") return;
+  if (exporting) return;
   const p = nearest(coordinate(event));
   if (p)
     edit(() => {
