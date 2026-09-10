@@ -129,9 +129,10 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   await page.locator("#undo").click();
   await ready(page);
   expect((await debug(page)).strokes[0].points.length).toBe(5);
-  await page.locator("#numbers").uncheck();
+  await page.locator("#guides").uncheck();
   expect(await page.locator(".point-number").count()).toBe(0);
-  await page.locator("#numbers").check();
+  expect(await page.locator("#overlay > *").count()).toBe(0);
+  await page.locator("#guides").check();
   await expect(page.locator("#tool-source")).toHaveCount(0);
   await expect(page.locator("#load")).toContainText("画像を選択");
   await expect(page.locator("#export")).toHaveText("エクスポート ↓");
@@ -239,7 +240,6 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   await page.screenshot({ path: "/private/tmp/spline-smudge-100-percent.png" });
   await page.locator("#fit").click();
   await page.locator("#guides").uncheck();
-  await page.locator("#numbers").uncheck();
   const withoutGuides = await download(page, "spline-smudge-guide-free");
   expect(withoutGuides.bytes.equals(a.bytes)).toBe(true);
   await page.locator("#mode-b").click();

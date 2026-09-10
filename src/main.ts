@@ -25,17 +25,17 @@ const range = (
   `<label class="range-label" for="${id}">${label}<output id="${id}-value"></output></label><input id="${id}" type="range" min="${min}" max="${max}" step="${step}">`;
 document.querySelector("#app")!.innerHTML = `
 <header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">画像を選択 <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>エクスポート ↓</button></div></header>
-<main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>色の動き</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯<small>採取した色を伸ばす</small></span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>点ごとの色<small>採取した色をつなぐ</small></span></button></div><p id="mode-note" class="note"></p></section>
+<main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>カラーピック</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯</span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>点ごとの色</span></button></div></section>
 <section><div class="section-title">02 <h2>スプライン</h2></div><div class="stroke-row"><span class="dot"></span><span>Stroke 01</span><span class="muted">編集中</span></div><label class="sr-only" for="kind">スプラインの種類</label><select id="kind">${Object.entries(
   kinds,
 )
   .map(([key, label]) => `<option value="${key}">${label}</option>`)
   .join(
     "",
-  )}</select><p class="note" id="curve-note"></p><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 500, 1)}<p class="micro">pxは元写真の座標基準。出力サイズに合わせて比例します。</p><div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">線を消す</button></div></section>
-<section><div class="section-title">03 <h2>色の採取</h2></div><p class="note" id="source-note"></p><div id="source-selected" class="source-selected"></div>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
-<section><div class="section-title">04 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px · A4の目安</option><option value="5000">5000 px · A3の目安</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label><p class="micro">JPG / PNG入力 → sRGB・8bit PNG出力<br>画像はこのブラウザ内だけで処理します。</p></section></fieldset></aside>
-<div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="numbers" type="checkbox" checked>番号</label><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
+  )}</select><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 500, 1)}<div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">線を消す</button></div></section>
+<section><div class="section-title">03 <h2>採取線</h2></div><div id="source-selected" class="source-selected"></div>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
+<section><div class="section-title">04 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px</option><option value="5000">5000 px</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label></section></fieldset></aside>
+<div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
 
 let renderer: Renderer;
 try {
@@ -52,8 +52,7 @@ let iw = 1600,
 let source: CanvasImageSource,
   originalFile: File | null = null,
   sourceBitmap: ImageBitmap | null = null;
-let numbers = true,
-  guides = true;
+let guides = true;
 let zoom = 1,
   pan = { x: 0, y: 0 },
   fitted = true,
@@ -90,15 +89,7 @@ function sync() {
   $<HTMLSelectElement>("kind").value = stroke().kind;
   $("mode-a").setAttribute("aria-pressed", String(state.mode === "A"));
   $("mode-b").setAttribute("aria-pressed", String(state.mode === "B"));
-  $("mode-note").textContent =
-    state.mode === "A"
-      ? "採取した色の並びが、曲線の最後まで続きます。"
-      : "各点で採取した色の並びを、点と点の間で滑らかにつなぎます。";
   const source = currentSource();
-  $("source-note").textContent =
-    state.mode === "A"
-      ? "始点を中心とする採取線の色を、線全体に使います。"
-      : "各点の位置から採取します。点を選び、角度と長さを調整してください。点と点の間はRGBで補間します。";
   $("source-selected").textContent =
     state.mode === "A"
       ? "始点の採取線 · A"
@@ -108,10 +99,6 @@ function sync() {
   for (const id of ["angle", "source-length"])
     $<HTMLInputElement>(id).disabled = state.mode === "B" && !point();
   $("tcb").hidden = stroke().kind !== "tcb";
-  $("curve-note").textContent =
-    stroke().kind === "bspline"
-      ? "制御点の内側をなめらかに通ります。点の太さは、対応する曲線上の位置に作用します。"
-      : "置いた点を通る曲線。点を動かして形を調整できます。";
   const values: Record<string, [number, string]> = {
     width: [stroke().width, `${stroke().width} px`],
     factor: [point()?.factor ?? 1, `${(point()?.factor ?? 1).toFixed(2)} ×`],
@@ -142,8 +129,7 @@ function sync() {
     ? String(state.longEdge)
     : "original";
   const s = size();
-  $("dimensions").textContent =
-    `${s.width} × ${s.height} px · 元の縦横比を維持`;
+  $("dimensions").textContent = `${s.width} × ${s.height} px`;
   $("empty-hint").hidden = stroke().points.length > 0;
   overlay();
 }
@@ -195,7 +181,7 @@ function overlay() {
       parts.push(
         `<circle class="point ${p.id === selected ? "active" : ""}" cx="${p.x}" cy="${p.y}" r="${r * (p.id === selected ? 1.3 : 1)}"/>`,
       );
-    if (numbers)
+    if (guides)
       parts.push(
         `<text class="point-number" x="${p.x + 11 / scale}" y="${p.y - 11 / scale}" font-size="${11 / scale}">${String(i + 1).padStart(2, "0")}</text>`,
       );
@@ -411,10 +397,6 @@ $("redo").onclick = () => {
   state = history.redo(state);
   requestRender();
   layout();
-};
-$("numbers").onchange = () => {
-  numbers = $<HTMLInputElement>("numbers").checked;
-  overlay();
 };
 $("guides").onchange = () => {
   guides = $<HTMLInputElement>("guides").checked;
