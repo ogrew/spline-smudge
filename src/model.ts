@@ -1,5 +1,10 @@
 export type Vec = { x: number; y: number };
-export type Point = Vec & { id: string; factor: number };
+export type SourceSettings = { angle: number; length: number };
+export type Point = Vec & {
+  id: string;
+  factor: number;
+  source?: SourceSettings;
+};
 export type Kind = "catmull" | "bspline" | "centripetal" | "natural" | "tcb";
 export const kinds: Record<Kind, string> = {
   catmull: "Catmull–Rom",
@@ -23,7 +28,6 @@ export type DocumentState = {
   mode: "A" | "B";
   strokes: Stroke[];
   activeId: string;
-  pickup: number;
   background: string;
   longEdge: number;
 };
@@ -31,7 +35,6 @@ export function initialState(width: number, height: number): DocumentState {
   return {
     mode: "A",
     activeId: "stroke-1",
-    pickup: 0.12,
     background: "#f3f0e8",
     longEdge: 2000,
     strokes: [
@@ -87,4 +90,17 @@ export class History {
     this.past = [];
     this.future = [];
   }
+}
+
+/** B sources stay at clicked control points, including non-interpolating B-splines. */
+export function pointSource(
+  stroke: Stroke,
+  point: Point,
+): Vec & SourceSettings {
+  return {
+    x: point.x,
+    y: point.y,
+    angle: point.source?.angle ?? stroke.source.angle,
+    length: point.source?.length ?? stroke.source.length,
+  };
 }

@@ -33,13 +33,17 @@ export function greville(knots: number[], degree: number, count: number) {
       knots.slice(i + 1, i + degree + 1).reduce((a, b) => a + b, 0) / degree,
   );
 }
-export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
-  // Collapse zero-length spans for chord-based splines. Last point owns the width of a coincident station.
+export function curvePoints(points: Point[]): Point[] {
+  // Last coincident point owns the width and B source of that station.
   const ps: Point[] = [];
-  for (const p of stroke.points) {
+  for (const p of points) {
     if (ps.length && dist(ps.at(-1)!, p) < 1e-7) ps[ps.length - 1] = p;
     else ps.push(p);
   }
+  return ps;
+}
+export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
+  const ps = curvePoints(stroke.points);
   if (ps.length < 2) return [];
   const count = ps.length,
     last = count - 1;
@@ -176,7 +180,7 @@ export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
       }
     }
   }
-  // Resample by arc length: pickup must depend on traveled distance, never input event rate.
+  // Resample by arc length for stable ribbon spacing, independent of input event rate.
   const sampled = [raw[0]];
   let remaining = step,
     previous = raw[0];

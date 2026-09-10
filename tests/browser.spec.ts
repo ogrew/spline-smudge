@@ -168,9 +168,39 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   });
   await page.locator("#mode-b").click();
   await ready(page);
+  await expect(page.locator("#pickup")).toHaveCount(0);
+  await page.mouse.click(
+    rect.x + 0.52 * rect.width,
+    rect.y + 0.42 * rect.height,
+  );
+  const sourcesBefore = (await debug(page)).strokes[0].points.map(
+    (p: any) => p.source,
+  );
+  await page.locator("#angle").fill("15");
+  await ready(page);
+  await page.locator("#source-length").fill("120");
+  await ready(page);
+  let edited = (await debug(page)).strokes[0];
+  expect(edited.points[2].source).toEqual({ angle: 15, length: 120 });
+  expect(edited.points[1].source).toEqual(sourcesBefore[1]);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].points[2].source.length).toBe(
+    sourcesBefore[2].length,
+  );
+  await page.locator("#redo").click();
+  await ready(page);
+  await page.locator("#mode-a").click();
+  await ready(page);
+  expect(await page.locator("#angle").inputValue()).toBe("45");
+  expect(await page.locator("#source-length").inputValue()).toBe("200");
+  await page.locator("#mode-b").click();
+  await ready(page);
+  expect(await page.locator("#angle").inputValue()).toBe("15");
+  expect(await page.locator("#source-length").inputValue()).toBe("120");
   await page.evaluate(() => {
-    const p = document.querySelector("#pickup") as HTMLInputElement;
-    p.value = "0.1";
+    const p = document.querySelector("#angle") as HTMLInputElement;
+    p.value = "20";
     p.dispatchEvent(new Event("input"));
     (document.querySelector("#cancel") as HTMLButtonElement).click();
   });
@@ -179,14 +209,14 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   await page.locator("#recalculate").click();
   await ready(page);
   await page.evaluate(() => {
-    const p = document.querySelector("#pickup") as HTMLInputElement;
+    const p = document.querySelector("#angle") as HTMLInputElement;
     for (let i = 1; i <= 12; i++) {
-      p.value = String(i / 100);
+      p.value = String(i * 5);
       p.dispatchEvent(new Event("input"));
     }
   });
   await ready(page);
-  expect((await debug(page)).pickup).toBe(0.12);
+  expect((await debug(page)).strokes[0].points[2].source.angle).toBe(60);
   await page.locator("#resolution").selectOption("5000");
   await ready(page);
   console.log("B full resolution", await page.locator("#status").textContent());
@@ -195,6 +225,7 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   console.log("B export ms", Date.now() - start);
   expect([b.width, b.height]).toEqual([5000, 3438]);
   expect(b.filename).toMatch(/^tcb_B_.*\.png$/);
+  await page.screenshot({ path: "/private/tmp/spline-smudge-per-point-B.png" });
   await page.locator("#mode-a").click();
   await ready(page);
   console.log("A full resolution", await page.locator("#status").textContent());
@@ -297,4 +328,105 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
     await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
   ).toBe(0);
   expect(errors).toEqual([]);
+});
+
+test("B shader reproduces point colors and interpolates RGB without picking up intervening pixels", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    const { Renderer } = await import("/src/renderer.ts");
+    const { initialState, activeStroke } = await import("/src/model.ts");
+    const image = document.createElement("canvas");
+    image.width = 200;
+    image.height = 150;
+    const x = image.getContext("2d")!;
+    x.fillStyle = "#ffffff";
+    x.fillRect(0, 0, 200, 150);
+    for (const [pos, color] of [
+      [20, "#ff0000"],
+      [100, "#00ff00"],
+      [180, "#0000ff"],
+    ] as const) {
+      x.fillStyle = color;
+      x.fillRect(pos - 10, 0, 20, 150);
+    }
+    const target = document.createElement("canvas"),
+      r = new Renderer(target),
+      state = initialState(200, 150);
+    state.mode = "B";
+    state.longEdge = 200;
+    const s = activeStroke(state);
+    s.width = 20;
+    s.points = [20, 100, 180].map((pos, i) => ({
+      id: String(i),
+      x: pos,
+      y: 75,
+      factor: 1,
+      source: { angle: 90, length: 10 },
+    }));
+    const pixels = async () => {
+      await r.render(
+        image,
+        200,
+        150,
+        state,
+        () => false,
+        () => {},
+      );
+      const blob = await r.exportPNG(),
+        bitmap = await createImageBitmap(blob),
+        c = document.createElement("canvas");
+      c.width = 200;
+      c.height = 150;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(bitmap, 0, 0);
+      const result = [21, 60, 100, 140, 178].map((pos) =>
+        Array.from(ctx.getImageData(pos, 75, 1, 1).data),
+      );
+      bitmap.close();
+      return result;
+    };
+    const baseline = await pixels();
+    x.fillStyle = "#ffff00";
+    x.fillRect(45, 0, 30, 150);
+    // A new source object invalidates the image cache, keeping settings identical.
+    const copy = document.createElement("canvas");
+    copy.width = 200;
+    copy.height = 150;
+    copy.getContext("2d")!.drawImage(image, 0, 0);
+    await r.render(
+      copy,
+      200,
+      150,
+      state,
+      () => false,
+      () => {},
+    );
+    const b = await createImageBitmap(await r.exportPNG());
+    const c = document.createElement("canvas");
+    c.width = 200;
+    c.height = 150;
+    const ctx = c.getContext("2d")!;
+    ctx.drawImage(b, 0, 0);
+    const changed = Array.from(ctx.getImageData(60, 75, 1, 1).data);
+    const glError = r.gl.getError();
+    r.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return { baseline, changed, glError };
+  });
+  const expected = [
+    [255, 0, 0, 255],
+    [128, 128, 0, 255],
+    [0, 255, 0, 255],
+    [0, 128, 128, 255],
+    [0, 0, 255, 255],
+  ];
+  result.baseline.forEach((pixel: number[], i: number) =>
+    pixel.forEach((channel, j) =>
+      expect(Math.abs(channel - expected[i][j])).toBeLessThanOrEqual(4),
+    ),
+  );
+  expect(result.changed).toEqual(result.baseline[1]);
+  expect(result.glError).toBe(0);
 });

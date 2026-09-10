@@ -1,6 +1,8 @@
 import type { DocumentState, Stroke } from "./model.ts";
 import { activeStroke, outputSize } from "./model.ts";
-import { sampleCurve, type Sample } from "./geometry.ts";
+import { sampleCurve } from "./geometry.ts";
+import { ribbonMesh, ribbonStride } from "./ribbon-mesh.ts";
+import { colorInterpolationGLSL } from "./color-interpolation.ts";
 
 type Target = {
   texture: WebGLTexture;
@@ -20,40 +22,38 @@ const copyFragment = `#version 300 es
 precision highp float;
 in vec2 uv; uniform sampler2D image; uniform bool flip; out vec4 color;
 void main(){color=texture(image,vec2(uv.x,flip?1.0-uv.y:uv.y));}`;
-const carryFragment = `#version 300 es
-precision highp float;
-in vec2 uv; uniform sampler2D image; uniform sampler2D previous;
-uniform vec2 center; uniform vec2 axis; uniform vec2 resolution;
-uniform float length; uniform float pickup; uniform bool initial; out vec4 color;
-void main(){vec4 picked=texture(image,(center+axis*(uv.x-0.5)*length)/resolution);
-color=initial?picked:mix(texture(previous,vec2(uv.x,0.5)),picked,pickup);}`;
 const ribbonVertex = `#version 300 es
 precision highp float;
-layout(location=0) in vec2 position; layout(location=1) in vec2 strip;
-uniform vec2 resolution; out vec2 uv;
-void main(){uv=strip;gl_Position=vec4(position/resolution*2.0-1.0,0,1);}`;
+layout(location=0) in vec2 position;
+layout(location=1) in vec2 sourceA;
+layout(location=2) in vec2 sourceB;
+layout(location=3) in vec2 strip;
+uniform vec2 resolution;
+out vec2 uvA; out vec2 uvB; out vec2 uv;
+void main(){uv=strip;uvA=sourceA/resolution;uvB=sourceB/resolution;gl_Position=vec4(position/resolution*2.0-1.0,0,1);}`;
 const ribbonFragment = `#version 300 es
 precision highp float;
-in vec2 uv; uniform sampler2D image; uniform sampler2D previous; uniform sampler2D current;
-uniform vec2 center; uniform vec2 axis; uniform vec2 resolution; uniform float length; uniform bool smudge;
-out vec4 color;
-void main(){color=smudge?mix(texture(previous,vec2(uv.x,0.5)),texture(current,vec2(uv.x,0.5)),uv.y):texture(image,(center+axis*(uv.x-0.5)*length)/resolution);
-float edge=max(fwidth(uv.x),0.00001); color.a*=smoothstep(0.0,edge,uv.x)*smoothstep(0.0,edge,1.0-uv.x);}`;
+in vec2 uvA; in vec2 uvB; in vec2 uv;
+uniform sampler2D image; uniform bool perPoint; out vec4 color;
+${colorInterpolationGLSL}
+void main(){
+vec4 a=texture(image,uvA);
+color=perPoint?interpolateColor(a,texture(image,uvB),uv.y):a;
+float edge=max(fwidth(uv.x),0.00001);
+color.a*=smoothstep(0.0,edge,uv.x)*smoothstep(0.0,edge,1.0-uv.x);
+}`;
 const frame = () =>
   new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 export class Renderer {
   readonly gl: WebGL2RenderingContext;
   readonly limit: number;
-  readonly floatCarry: boolean;
   private copy: Program;
-  private carry: Program;
   private ribbon: Program;
   private vao: WebGLVertexArrayObject;
   private buffer: WebGLBuffer;
   private photo?: Target;
   private working?: Target;
   private complete?: Target;
-  private brushes: Target[] = [];
   private sourceKey = "";
   private sourceObject?: CanvasImageSource;
   width = 1;
@@ -78,18 +78,16 @@ export class Renderer {
       viewport[0],
       viewport[1],
     );
-    this.floatCarry = !!gl.getExtension("EXT_color_buffer_float");
     this.copy = this.program(fullVertex, copyFragment);
-    this.carry = this.program(fullVertex, carryFragment);
     this.ribbon = this.program(ribbonVertex, ribbonFragment);
     this.vao = gl.createVertexArray()!;
     this.buffer = gl.createBuffer()!;
     gl.bindVertexArray(this.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-    gl.enableVertexAttribArray(0);
-    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
-    gl.enableVertexAttribArray(1);
-    gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+    for (let i = 0; i < 4; i++) {
+      gl.enableVertexAttribArray(i);
+      gl.vertexAttribPointer(i, 2, gl.FLOAT, false, ribbonStride * 4, i * 8);
+    }
     gl.bindVertexArray(null);
   }
   private program(vertex: string, fragment: string): Program {
@@ -115,9 +113,6 @@ export class Renderer {
       p.uniforms.set(key, this.gl.getUniformLocation(p.program, key));
     return p.uniforms.get(key)!;
   }
-  private number(p: Program, key: string, v: number) {
-    this.gl.uniform1f(this.location(p, key), v);
-  }
   private flag(p: Program, key: string, v: boolean) {
     this.gl.uniform1i(this.location(p, key), v ? 1 : 0);
   }
@@ -130,12 +125,12 @@ export class Renderer {
     g.bindTexture(g.TEXTURE_2D, t);
     g.uniform1i(this.location(p, key), unit);
   }
-  private target(w: number, h: number, float = false): Target {
+  private target(w: number, h: number): Target {
     const g = this.gl,
       texture = g.createTexture()!,
       fbo = g.createFramebuffer()!;
     g.bindTexture(g.TEXTURE_2D, texture);
-    g.texStorage2D(g.TEXTURE_2D, 1, float ? g.RGBA16F : g.RGBA8, w, h);
+    g.texStorage2D(g.TEXTURE_2D, 1, g.RGBA8, w, h);
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
@@ -250,6 +245,10 @@ export class Renderer {
         ...p,
         x: p.x * scale,
         y: p.y * scale,
+        source: {
+          angle: p.source?.angle ?? stroke.source.angle,
+          length: (p.source?.length ?? stroke.source.length) * scale,
+        },
       })),
       source: {
         ...stroke.source,
@@ -258,87 +257,15 @@ export class Renderer {
         length: stroke.source.length * scale,
       },
     };
-    // Sampling is defined in source-image distance; zoom and output size do not change pigment pickup.
+    // Sample in source-image distance so zoom does not change the mesh.
     const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale));
     if (samples.length > 1) {
-      const verts = this.mesh(samples, scaled.width);
+      const verts = ribbonMesh(samples, scaled, state.mode);
       g.bindVertexArray(this.vao);
       g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
       g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
-      if (state.mode === "A") {
-        this.ribbonSetup(scaled, false);
-        g.drawArrays(g.TRIANGLES, 0, verts.length / 4);
-      } else {
-        if (!this.floatCarry)
-          throw new Error(
-            "Bの色保持に必要なGPU機能がありません。この端末ではAをご利用ください。",
-          );
-        const brushWidth = Math.min(
-          this.limit,
-          Math.max(
-            256,
-            Math.ceil(
-              Math.max(
-                scaled.source.length,
-                ...samples.map((p) => p.factor * scaled.width),
-              ),
-            ),
-          ),
-        );
-        if (
-          this.brushes.length !== 2 ||
-          this.brushes[0]?.width !== brushWidth
-        ) {
-          this.brushes.forEach((t) => this.drop(t));
-          this.brushes = [];
-          this.brushes.push(this.target(brushWidth, 1, true));
-          this.brushes.push(this.target(brushWidth, 1, true));
-        }
-        let previous = this.brushes[0],
-          current = this.brushes[1];
-        this.pickup(
-          scaled.source,
-          scaled.source.angle,
-          scaled.source.length,
-          1,
-          true,
-          this.photo!,
-          previous,
-          current,
-        );
-        [previous, current] = [current, previous];
-        let chunk = performance.now();
-        for (let i = 1; i < samples.length; i++) {
-          if (cancelled() || g.isContextLost()) return false;
-          const p = samples[i],
-            distance = (p.distance - samples[i - 1].distance) / scale;
-          const mix =
-            1 -
-            Math.exp(
-              (-state.pickup * distance) / Math.max(1, stroke.width * 0.4),
-            );
-          this.pickup(
-            p,
-            (Math.atan2(p.ny, p.nx) * 180) / Math.PI,
-            scaled.width * p.factor,
-            mix,
-            false,
-            this.working!,
-            previous,
-            current,
-          );
-          this.ribbonSetup(scaled, true);
-          this.texture(this.ribbon, "previous", previous.texture, 1);
-          this.texture(this.ribbon, "current", current.texture, 2);
-          g.drawArrays(g.TRIANGLES, (i - 1) * 6, 6);
-          [previous, current] = [current, previous];
-          if (performance.now() - chunk > 8) {
-            progress(i / (samples.length - 1));
-            await frame();
-            chunk = performance.now();
-          }
-        }
-      }
+      this.ribbonSetup(state.mode === "B");
+      g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
     }
     if (cancelled() || g.isContextLost()) return false;
     // Wait for GPU completion without blocking the UI; cancelled jobs never replace the completed image.
@@ -364,26 +291,7 @@ export class Renderer {
     progress(1);
     return true;
   }
-  private mesh(samples: Sample[], width: number) {
-    const vertices: number[] = [];
-    for (let i = 1; i < samples.length; i++) {
-      const a = samples[i - 1],
-        b = samples[i];
-      for (const [p, cross, along] of [
-        [a, 0, 0],
-        [a, 1, 0],
-        [b, 0, 1],
-        [b, 0, 1],
-        [a, 1, 0],
-        [b, 1, 1],
-      ] as const) {
-        const r = (cross - 0.5) * width * p.factor;
-        vertices.push(p.x + p.nx * r, p.y + p.ny * r, cross, along);
-      }
-    }
-    return new Float32Array(vertices);
-  }
-  private ribbonSetup(stroke: Stroke, smudge: boolean) {
+  private ribbonSetup(perPoint: boolean) {
     const g = this.gl,
       p = this.ribbon;
     this.bind(this.working!);
@@ -397,46 +305,8 @@ export class Renderer {
       g.ONE_MINUS_SRC_ALPHA,
     );
     this.pair(p, "resolution", this.width, this.height);
-    this.pair(p, "center", stroke.source.x, stroke.source.y);
-    const angle = (stroke.source.angle * Math.PI) / 180;
-    this.pair(p, "axis", Math.cos(angle), Math.sin(angle));
-    this.number(p, "length", stroke.source.length);
-    this.flag(p, "smudge", smudge);
+    this.flag(p, "perPoint", perPoint);
     this.texture(p, "image", this.photo!.texture, 0);
-    // Bind valid non-target textures even when the conditional branch doesn't sample them.
-    this.texture(p, "previous", this.photo!.texture, 1);
-    this.texture(p, "current", this.photo!.texture, 2);
-  }
-  private pickup(
-    center: { x: number; y: number },
-    angle: number,
-    length: number,
-    mix: number,
-    initial: boolean,
-    image: Target,
-    previous: Target,
-    target: Target,
-  ) {
-    const g = this.gl,
-      p = this.carry;
-    this.bind(target);
-    g.disable(g.BLEND);
-    g.useProgram(p.program);
-    g.bindVertexArray(null);
-    this.texture(p, "image", image.texture, 0);
-    this.texture(p, "previous", previous.texture, 1);
-    this.pair(p, "resolution", this.width, this.height);
-    this.pair(p, "center", center.x, center.y);
-    this.pair(
-      p,
-      "axis",
-      Math.cos((angle * Math.PI) / 180),
-      Math.sin((angle * Math.PI) / 180),
-    );
-    this.number(p, "length", length);
-    this.number(p, "pickup", mix);
-    this.flag(p, "initial", initial);
-    g.drawArrays(g.TRIANGLES, 0, 3);
   }
   present(width: number, height: number) {
     if (!this.ready || !this.complete) return;

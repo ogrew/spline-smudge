@@ -6,6 +6,8 @@ import {
   initialState,
   kinds,
   outputSize,
+  pointSource,
+  type SourceSettings,
   type DocumentState,
   type Kind,
 } from "./model.ts";
@@ -23,7 +25,7 @@ const range = (
   `<label class="range-label" for="${id}">${label}<output id="${id}-value"></output></label><input id="${id}" type="range" min="${min}" max="${max}" step="${step}">`;
 document.querySelector("#app")!.innerHTML = `
 <header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">画像を選択 <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>エクスポート ↓</button></div></header>
-<main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>色の動き</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯<small>採取した色を伸ばす</small></span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>引きずる<small>通り道の色を拾う</small></span></button></div><p id="mode-note" class="note"></p><div id="pickup-group">${range("pickup", "色を拾う量", 0, 1, 0.01)}</div></section>
+<main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>色の動き</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯<small>採取した色を伸ばす</small></span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>点ごとの色<small>採取した色をつなぐ</small></span></button></div><p id="mode-note" class="note"></p></section>
 <section><div class="section-title">02 <h2>スプライン</h2></div><div class="stroke-row"><span class="dot"></span><span>Stroke 01</span><span class="muted">編集中</span></div><label class="sr-only" for="kind">スプラインの種類</label><select id="kind">${Object.entries(
   kinds,
 )
@@ -31,7 +33,7 @@ document.querySelector("#app")!.innerHTML = `
   .join(
     "",
   )}</select><p class="note" id="curve-note"></p><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 500, 1)}<p class="micro">pxは元写真の座標基準。出力サイズに合わせて比例します。</p><div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">線を消す</button></div></section>
-<section><div class="section-title">03 <h2>色の採取</h2></div><p class="note">黄色の採取線は常に線の始点が中心です。角度と採取する長さを調整できます。</p>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
+<section><div class="section-title">03 <h2>色の採取</h2></div><p class="note" id="source-note"></p><div id="source-selected" class="source-selected"></div>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
 <section><div class="section-title">04 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px · A4の目安</option><option value="5000">5000 px · A3の目安</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label><p class="micro">JPG / PNG入力 → sRGB・8bit PNG出力<br>画像はこのブラウザ内だけで処理します。</p></section></fieldset></aside>
 <div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="numbers" type="checkbox" checked>番号</label><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
 
@@ -65,6 +67,21 @@ let completedRevision = -1;
 const history = new History();
 const stroke = () => activeStroke(state);
 const point = () => stroke().points.find((p) => p.id === selected);
+const currentSource = () =>
+  state.mode === "B" && point()
+    ? pointSource(stroke(), point()!)
+    : stroke().source;
+function updateSource(key: keyof SourceSettings, value: number) {
+  if (state.mode === "A") stroke().source[key] = value;
+  else if (point()) {
+    const source = pointSource(stroke(), point()!);
+    point()!.source = {
+      angle: source.angle,
+      length: source.length,
+      [key]: value,
+    };
+  }
+}
 const size = () => outputSize(iw, ih, state.longEdge);
 const setStatus = (text: string) => {
   $("status").textContent = text;
@@ -76,8 +93,20 @@ function sync() {
   $("mode-note").textContent =
     state.mode === "A"
       ? "採取した色の並びが、曲線の最後まで続きます。"
-      : "始点の色を運び、進行方向に回転しながら新しい色を混ぜます。";
-  $("pickup-group").hidden = state.mode !== "B";
+      : "各点で採取した色の並びを、点と点の間で滑らかにつなぎます。";
+  const source = currentSource();
+  $("source-note").textContent =
+    state.mode === "A"
+      ? "始点を中心とする採取線の色を、線全体に使います。"
+      : "各点の位置から採取します。点を選び、角度と長さを調整してください。点と点の間はRGBで補間します。";
+  $("source-selected").textContent =
+    state.mode === "A"
+      ? "始点の採取線 · A"
+      : point()
+        ? `POINT ${String(stroke().points.indexOf(point()!) + 1).padStart(2, "0")} の採取線 · B`
+        : "編集する点を選択してください";
+  for (const id of ["angle", "source-length"])
+    $<HTMLInputElement>(id).disabled = state.mode === "B" && !point();
   $("tcb").hidden = stroke().kind !== "tcb";
   $("curve-note").textContent =
     stroke().kind === "bspline"
@@ -86,12 +115,8 @@ function sync() {
   const values: Record<string, [number, string]> = {
     width: [stroke().width, `${stroke().width} px`],
     factor: [point()?.factor ?? 1, `${(point()?.factor ?? 1).toFixed(2)} ×`],
-    angle: [stroke().source.angle, `${Math.round(stroke().source.angle)}°`],
-    "source-length": [
-      stroke().source.length,
-      `${Math.round(stroke().source.length)} px`,
-    ],
-    pickup: [state.pickup, `${Math.round(state.pickup * 100)}%`],
+    angle: [source.angle, `${Math.round(source.angle)}°`],
+    "source-length": [source.length, `${Math.round(source.length)} px`],
     tension: [stroke().tension, stroke().tension.toFixed(2)],
     continuity: [stroke().continuity, stroke().continuity.toFixed(2)],
     bias: [stroke().bias, stroke().bias.toFixed(2)],
@@ -139,20 +164,31 @@ function overlay() {
     );
   }
   if (guides && pts.length > 0) {
-    const s = stroke().source,
-      a = (s.angle * Math.PI) / 180,
-      dx = (Math.cos(a) * s.length) / 2,
-      dy = (Math.sin(a) * s.length) / 2;
-    parts.push(
-      `<line class="source-line" x1="${s.x - dx}" y1="${s.y - dy}" x2="${s.x + dx}" y2="${s.y + dy}"/>`,
-    );
-    for (const sign of [-1, 0, 1])
+    const sources =
+      state.mode === "A"
+        ? [{ ...stroke().source, label: "SOURCE 01", active: true }]
+        : pts.map((p, i) => ({
+            ...pointSource(stroke(), p),
+            label: `SOURCE ${String(i + 1).padStart(2, "0")}`,
+            active: p.id === selected,
+          }));
+    for (const s of sources) {
+      const a = (s.angle * Math.PI) / 180,
+        dx = (Math.cos(a) * s.length) / 2,
+        dy = (Math.sin(a) * s.length) / 2;
       parts.push(
-        `<circle class="source-handle" cx="${s.x + dx * sign}" cy="${s.y + dy * sign}" r="${r * (sign ? 0.8 : 1)}"/>`,
+        `<g class="source-guide" opacity="${s.active ? 1 : 0.4}"><line class="source-line" x1="${s.x - dx}" y1="${s.y - dy}" x2="${s.x + dx}" y2="${s.y + dy}"/>`,
       );
-    parts.push(
-      `<text class="source-text" x="${s.x + 8 / scale}" y="${s.y - 12 / scale}" font-size="${10 / scale}">COLOR SOURCE</text>`,
-    );
+      for (const sign of [-1, 1])
+        parts.push(
+          `<circle class="source-handle" cx="${s.x + dx * sign}" cy="${s.y + dy * sign}" r="${r * 0.8}"/>`,
+        );
+      if (s.active)
+        parts.push(
+          `<text class="source-text" x="${s.x + 8 / scale}" y="${s.y + 22 / scale}" font-size="${10 / scale}">${s.label}</text>`,
+        );
+      parts.push("</g>");
+    }
   }
   for (const [i, p] of pts.entries()) {
     if (guides)
@@ -259,6 +295,7 @@ function randomPoints() {
       x: iw * (0.05 + Math.random() * 0.9),
       y: ih * (0.05 + Math.random() * 0.9),
       factor: 0.5 + Math.random() * 1.3,
+      source: { angle: stroke().source.angle, length: stroke().source.length },
     }),
   );
   selected = stroke().points[2].id;
@@ -319,9 +356,8 @@ const changes: Record<string, (v: number) => void> = {
   factor: (v) => {
     if (point()) point()!.factor = v;
   },
-  angle: (v) => (stroke().source.angle = v),
-  "source-length": (v) => (stroke().source.length = v),
-  pickup: (v) => (state.pickup = v),
+  angle: (v) => updateSource("angle", v),
+  "source-length": (v) => updateSource("length", v),
   tension: (v) => (stroke().tension = v),
   continuity: (v) => (stroke().continuity = v),
   bias: (v) => (stroke().bias = v),
@@ -448,7 +484,15 @@ $("stage").addEventListener("pointerdown", (event) => {
       sync();
     } else if (inside(p) && event.detail < 2) {
       history.push(state);
-      const added = { ...p, id: crypto.randomUUID(), factor: 1 };
+      const added = {
+        ...p,
+        id: crypto.randomUUID(),
+        factor: 1,
+        source: {
+          angle: stroke().source.angle,
+          length: stroke().source.length,
+        },
+      };
       stroke().points.push(added);
       selected = added.id;
       if (stroke().points.length === 1) {
@@ -648,9 +692,6 @@ if (import.meta.env.DEV)
       },
       get limit() {
         return renderer.limit;
-      },
-      get floatCarry() {
-        return renderer.floatCarry;
       },
       get gl() {
         return renderer.gl;

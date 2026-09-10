@@ -566,3 +566,9 @@ progress {
     padding: 0 10px;
   }
 }
+.source-selected {
+  color: #e0d0a7;
+  font-size: 10px;
+  letter-spacing: 0.4px;
+  margin: 12px 0;
+}
