@@ -1,0 +1,704 @@
+import "./style.css";
+import { Renderer } from "./renderer.ts";
+import {
+  History,
+  activeStroke,
+  initialState,
+  kinds,
+  outputSize,
+  type DocumentState,
+  type Kind,
+} from "./model.ts";
+import { sampleCurve } from "./geometry.ts";
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
+  document.getElementById(id) as T;
+const range = (
+  id: string,
+  label: string,
+  min: number,
+  max: number,
+  step: number,
+) =>
+  `<label class="range-label" for="${id}">${label}<output id="${id}-value"></output></label><input id="${id}" type="range" min="${min}" max="${max}" step="${step}">`;
+document.querySelector("#app")!.innerHTML = `
+<header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">写真を開く <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>PNGを書き出す ↓</button></div></header>
+<main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>色の動き</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯<small>採取した色を伸ばす</small></span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>引きずる<small>通り道の色を拾う</small></span></button></div><p id="mode-note" class="note"></p><div id="pickup-group">${range("pickup", "色を拾う量", 0, 1, 0.01)}</div></section>
+<section><div class="section-title">02 <h2>スプライン</h2></div><div class="stroke-row"><span class="dot"></span><span>Stroke 01</span><span class="muted">編集中</span></div><label class="sr-only" for="kind">スプラインの種類</label><select id="kind">${Object.entries(
+  kinds,
+)
+  .map(([key, label]) => `<option value="${key}">${label}</option>`)
+  .join(
+    "",
+  )}</select><p class="note" id="curve-note"></p><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 500, 1)}<p class="micro">pxは元写真の座標基準。出力サイズに合わせて比例します。</p><div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">線を消す</button></div></section>
+<section><div class="section-title">03 <h2>色の採取</h2></div><div class="tools"><button id="tool-points" aria-pressed="true">点を編集</button><button id="tool-source" aria-pressed="false">採取線を移動</button></div><p class="note">黄色の線が色の採取範囲です。採取線を移動するモードでは、写真のクリックで位置を、両端のドラッグで角度と長さを変えられます。</p>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}<button id="source-start" class="subtle">線の始点から採取</button></section>
+<section><div class="section-title">04 <h2>画像と出力</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px · A4の目安</option><option value="5000">5000 px · A3の目安</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label><p class="micro">JPG / PNG入力 → sRGB・8bit PNG出力<br>画像はこのブラウザ内だけで処理します。</p></section></fieldset></aside>
+<div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="numbers" type="checkbox" checked>番号</label><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
+
+let renderer: Renderer;
+try {
+  renderer = new Renderer($<HTMLCanvasElement>("image"));
+} catch (error) {
+  $("stage").innerHTML = `<div class="fatal"></div>`;
+  $("stage").querySelector(".fatal")!.textContent = String(error);
+  throw error;
+}
+let iw = 1600,
+  ih = 1100,
+  state = initialState(iw, ih),
+  selected: string | null = null;
+let source: CanvasImageSource,
+  originalFile: File | null = null,
+  sourceBitmap: ImageBitmap | null = null;
+let mode: "points" | "source" = "points",
+  numbers = true,
+  guides = true;
+let zoom = 1,
+  pan = { x: 0, y: 0 },
+  fitted = true,
+  space = false;
+let revision = 0,
+  running = false,
+  queued = false,
+  exporting = false,
+  loadId = 0;
+let completedRevision = -1;
+const history = new History();
+const stroke = () => activeStroke(state);
+const point = () => stroke().points.find((p) => p.id === selected);
+const size = () => outputSize(iw, ih, state.longEdge);
+const setStatus = (text: string) => {
+  $("status").textContent = text;
+};
+function sync() {
+  $<HTMLSelectElement>("kind").value = stroke().kind;
+  $("mode-a").setAttribute("aria-pressed", String(state.mode === "A"));
+  $("mode-b").setAttribute("aria-pressed", String(state.mode === "B"));
+  $("mode-note").textContent =
+    state.mode === "A"
+      ? "採取した色の並びが、曲線の最後まで続きます。"
+      : "始点の色を運び、進行方向に回転しながら新しい色を混ぜます。";
+  $("pickup-group").hidden = state.mode !== "B";
+  $("tcb").hidden = stroke().kind !== "tcb";
+  $("curve-note").textContent =
+    stroke().kind === "bspline"
+      ? "制御点の内側をなめらかに通ります。点の太さは、対応する曲線上の位置に作用します。"
+      : "置いた点を通る曲線。点を動かして形を調整できます。";
+  const values: Record<string, [number, string]> = {
+    width: [stroke().width, `${stroke().width} px`],
+    factor: [point()?.factor ?? 1, `${(point()?.factor ?? 1).toFixed(2)} ×`],
+    angle: [stroke().source.angle, `${Math.round(stroke().source.angle)}°`],
+    "source-length": [
+      stroke().source.length,
+      `${Math.round(stroke().source.length)} px`,
+    ],
+    pickup: [state.pickup, `${Math.round(state.pickup * 100)}%`],
+    tension: [stroke().tension, stroke().tension.toFixed(2)],
+    continuity: [stroke().continuity, stroke().continuity.toFixed(2)],
+    bias: [stroke().bias, stroke().bias.toFixed(2)],
+  };
+  $<HTMLInputElement>("width").max = String(Math.max(iw, ih));
+  $<HTMLInputElement>("source-length").max = String(
+    Math.ceil(Math.hypot(iw, ih)),
+  );
+  for (const [id, [value, text]] of Object.entries(values)) {
+    $<HTMLInputElement>(id).value = String(value);
+    $(`${id}-value`).textContent = text;
+  }
+  $<HTMLInputElement>("factor").disabled = !point();
+  $("selected-name").textContent = point()
+    ? `POINT ${String(stroke().points.indexOf(point()!) + 1).padStart(2, "0")}`
+    : "点を選択してください";
+  $<HTMLButtonElement>("undo").disabled = !history.canUndo || exporting;
+  $<HTMLButtonElement>("redo").disabled = !history.canRedo || exporting;
+  $<HTMLInputElement>("background").value = state.background;
+  $<HTMLSelectElement>("resolution").value = [2000, 3508, 5000].includes(
+    state.longEdge,
+  )
+    ? String(state.longEdge)
+    : "original";
+  const s = size();
+  $("dimensions").textContent =
+    `${s.width} × ${s.height} px · 元の縦横比を維持`;
+  $("tool-points").setAttribute("aria-pressed", String(mode === "points"));
+  $("tool-source").setAttribute("aria-pressed", String(mode === "source"));
+  $("stage").classList.toggle("source-tool", mode === "source");
+  $("empty-hint").hidden = stroke().points.length > 0;
+  overlay();
+}
+function overlay() {
+  const view = $("overlay"),
+    pts = stroke().points,
+    scale = (size().width / iw) * zoom,
+    r = 5 / scale;
+  view.setAttribute("viewBox", `0 0 ${iw} ${ih}`);
+  const parts: string[] = [];
+  if (guides) {
+    const sampled = sampleCurve(stroke(), Math.max(2, iw / 500));
+    parts.push(
+      `<polyline class="polygon" points="${pts.map((p) => `${p.x},${p.y}`).join(" ")}"/>`,
+    );
+    parts.push(
+      `<polyline class="centerline" points="${sampled.map((p) => `${p.x},${p.y}`).join(" ")}"/>`,
+    );
+  }
+  if (guides || mode === "source") {
+    const s = stroke().source,
+      a = (s.angle * Math.PI) / 180,
+      dx = (Math.cos(a) * s.length) / 2,
+      dy = (Math.sin(a) * s.length) / 2;
+    parts.push(
+      `<line class="source-line" x1="${s.x - dx}" y1="${s.y - dy}" x2="${s.x + dx}" y2="${s.y + dy}"/>`,
+    );
+    for (const sign of [-1, 0, 1])
+      parts.push(
+        `<circle class="source-handle" cx="${s.x + dx * sign}" cy="${s.y + dy * sign}" r="${r * (sign ? 0.8 : 1)}"/>`,
+      );
+    parts.push(
+      `<text class="source-text" x="${s.x + 8 / scale}" y="${s.y - 12 / scale}" font-size="${10 / scale}">COLOR SOURCE</text>`,
+    );
+  }
+  for (const [i, p] of pts.entries()) {
+    if (guides)
+      parts.push(
+        `<circle class="point ${p.id === selected ? "active" : ""}" cx="${p.x}" cy="${p.y}" r="${r * (p.id === selected ? 1.3 : 1)}"/>`,
+      );
+    if (numbers)
+      parts.push(
+        `<text class="point-number" x="${p.x + 11 / scale}" y="${p.y - 11 / scale}" font-size="${11 / scale}">${String(i + 1).padStart(2, "0")}</text>`,
+      );
+  }
+  view.innerHTML = parts.join("");
+}
+function layout() {
+  const rect = $("stage").getBoundingClientRect(),
+    s = size();
+  if (fitted) {
+    zoom = Math.min(
+      (rect.width - 96) / s.width,
+      (rect.height - 100) / s.height,
+    );
+    pan = { x: 0, y: 0 };
+  }
+  zoom = Math.max(0.01, zoom);
+  const w = s.width * zoom,
+    h = s.height * zoom;
+  $("art").style.width = `${w}px`;
+  $("art").style.height = `${h}px`;
+  $("art").style.transform =
+    `translate(${(rect.width - w) / 2 + pan.x}px,${(rect.height - h) / 2 + pan.y}px)`;
+  $("zoom-label").textContent = `${Math.round(zoom * 100)}%`;
+  renderer.present(
+    Math.max(1, Math.min(s.width, Math.round(w * devicePixelRatio))),
+    Math.max(1, Math.min(s.height, Math.round(h * devicePixelRatio))),
+  );
+  overlay();
+}
+function requestRender() {
+  revision++;
+  queued = true;
+  completedRevision = -1;
+  $<HTMLButtonElement>("export").disabled = true;
+  $("recalculate").hidden = true;
+  sync();
+  if (!running) void drain();
+}
+async function drain() {
+  running = true;
+  $("cancel").hidden = false;
+  $("progress").hidden = false;
+  while (queued) {
+    queued = false;
+    const current = revision,
+      snapshot = structuredClone(state),
+      start = performance.now();
+    setStatus(`${snapshot.mode} を描画中…`);
+    try {
+      const done = await renderer.render(
+        source,
+        iw,
+        ih,
+        snapshot,
+        () => current !== revision,
+        (p) => {
+          $<HTMLProgressElement>("progress").value = p;
+        },
+      );
+      if (done) {
+        completedRevision = current;
+        layout();
+        setStatus(
+          `${snapshot.mode} · ${size().width} × ${size().height} px · ${(performance.now() - start).toFixed(0)} ms`,
+        );
+      }
+    } catch (error) {
+      if (current === revision) {
+        setStatus(error instanceof Error ? error.message : String(error));
+        $("recalculate").hidden = false;
+      }
+    }
+  }
+  running = false;
+  $("cancel").hidden = true;
+  $("progress").hidden = true;
+  $<HTMLButtonElement>("export").disabled =
+    completedRevision !== revision || !renderer.ready;
+}
+function edit(change: () => void) {
+  if (exporting) return;
+  history.push(state);
+  change();
+  requestRender();
+}
+function randomPoints() {
+  stroke().points = Array.from({ length: 5 }, (_, i) => ({
+    id: crypto.randomUUID(),
+    x: iw * (0.12 + i * 0.18 + (Math.random() - 0.5) * 0.09),
+    y: ih * (0.22 + Math.random() * 0.56),
+    factor: 0.5 + Math.random() * 1.3,
+  }));
+  selected = stroke().points[2].id;
+  const first = stroke().points[0];
+  stroke().source.x = first.x;
+  stroke().source.y = first.y;
+}
+function demo() {
+  const c = document.createElement("canvas");
+  c.width = iw;
+  c.height = ih;
+  const x = c.getContext("2d")!;
+  const gradient = x.createLinearGradient(0, 0, iw, ih);
+  gradient.addColorStop(0, "#29394e");
+  gradient.addColorStop(0.4, "#b67051");
+  gradient.addColorStop(0.75, "#233e50");
+  gradient.addColorStop(1, "#dfb579");
+  x.fillStyle = gradient;
+  x.fillRect(0, 0, iw, ih);
+  const colors = [
+    "#dfb579",
+    "#e5cec0",
+    "#111f30",
+    "#4d8590",
+    "#b4553e",
+    "#262835",
+    "#f3ab77",
+  ];
+  for (let y = 0; y < ih; y += 11) {
+    x.globalAlpha = 0.25 + ((y * 13) % 10) / 20;
+    x.fillStyle = colors[Math.floor(y / 11) % colors.length];
+    x.fillRect(0, y, iw, 3 + (y % 17));
+  }
+  x.globalAlpha = 1;
+  for (let i = 0; i < 22; i++) {
+    const bx = i * 78 - 20,
+      bh = 100 + ((i * 137) % 610);
+    x.fillStyle = i % 2 ? "#172a34" : "#233540";
+    x.fillRect(bx, ih - bh, 60, bh);
+    for (let yy = ih - bh + 12; yy < ih; yy += 18)
+      for (let xx = bx + 6; xx < bx + 55; xx += 12) {
+        x.fillStyle = (xx + yy) % 3 ? "#cdac6b" : "#426779";
+        x.fillRect(xx, yy, 4, 6);
+      }
+  }
+  return c;
+}
+source = demo();
+randomPoints();
+$("image-name").textContent = "DEMO · 生成パターン";
+$("image-size").textContent = `${iw} × ${ih}`;
+for (const m of ["A", "B"] as const)
+  $(`mode-${m.toLowerCase()}`).onclick = () => edit(() => (state.mode = m));
+$("kind").onchange = () =>
+  edit(() => (stroke().kind = $<HTMLSelectElement>("kind").value as Kind));
+const changes: Record<string, (v: number) => void> = {
+  width: (v) => (stroke().width = v),
+  factor: (v) => {
+    if (point()) point()!.factor = v;
+  },
+  angle: (v) => (stroke().source.angle = v),
+  "source-length": (v) => (stroke().source.length = v),
+  pickup: (v) => (state.pickup = v),
+  tension: (v) => (stroke().tension = v),
+  continuity: (v) => (stroke().continuity = v),
+  bias: (v) => (stroke().bias = v),
+};
+for (const [id, change] of Object.entries(changes)) {
+  const input = $<HTMLInputElement>(id);
+  let checkpoint = false;
+  input.addEventListener("pointerdown", () => {
+    history.push(state);
+    checkpoint = true;
+  });
+  input.addEventListener("input", () => {
+    if (!checkpoint) {
+      history.push(state);
+      checkpoint = true;
+    }
+    change(Number(input.value));
+    requestRender();
+  });
+  input.addEventListener("change", () => {
+    checkpoint = false;
+  });
+  input.addEventListener("blur", () => {
+    checkpoint = false;
+  });
+}
+$("resolution").onchange = () =>
+  edit(() => {
+    const v = $<HTMLSelectElement>("resolution").value;
+    state.longEdge = v === "original" ? Math.max(iw, ih) : Number(v);
+    fitted = true;
+    layout();
+  });
+$("background").onchange = () =>
+  edit(() => (state.background = $<HTMLInputElement>("background").value));
+$("sample").onclick = () => edit(randomPoints);
+$("clear").onclick = () =>
+  edit(() => {
+    stroke().points = [];
+    selected = null;
+  });
+$("source-start").onclick = () =>
+  edit(() => {
+    const p = stroke().points[0];
+    if (p) {
+      stroke().source.x = p.x;
+      stroke().source.y = p.y;
+    }
+  });
+$("undo").onclick = () => {
+  if (exporting) return;
+  state = history.undo(state);
+  if (!point()) selected = null;
+  requestRender();
+  layout();
+};
+$("redo").onclick = () => {
+  if (exporting) return;
+  state = history.redo(state);
+  requestRender();
+  layout();
+};
+for (const t of ["points", "source"] as const)
+  $(`tool-${t}`).onclick = () => {
+    mode = t;
+    sync();
+  };
+$("numbers").onchange = () => {
+  numbers = $<HTMLInputElement>("numbers").checked;
+  overlay();
+};
+$("guides").onchange = () => {
+  guides = $<HTMLInputElement>("guides").checked;
+  overlay();
+};
+$("fit").onclick = () => {
+  fitted = true;
+  layout();
+};
+$("one").onclick = () => {
+  zoom = 1;
+  pan = { x: 0, y: 0 };
+  fitted = false;
+  layout();
+};
+function zoomBy(factor: number) {
+  fitted = false;
+  zoom = Math.max(0.02, Math.min(8, zoom * factor));
+  layout();
+}
+$("plus").onclick = () => zoomBy(1.25);
+$("minus").onclick = () => zoomBy(0.8);
+$("stage").addEventListener(
+  "wheel",
+  (event) => {
+    event.preventDefault();
+    zoomBy(Math.exp(-event.deltaY * 0.001));
+  },
+  { passive: false },
+);
+const coordinate = (event: PointerEvent | MouseEvent) => {
+  const rect = $("art").getBoundingClientRect();
+  return {
+    x: ((event.clientX - rect.left) / rect.width) * iw,
+    y: ((event.clientY - rect.top) / rect.height) * ih,
+  };
+};
+const inside = (p: { x: number; y: number }) =>
+  p.x >= 0 && p.y >= 0 && p.x <= iw && p.y <= ih;
+const nearest = (p: { x: number; y: number }) =>
+  stroke().points.find(
+    (q) => Math.hypot(q.x - p.x, q.y - p.y) < 11 / ((size().width / iw) * zoom),
+  );
+let drag: null | {
+  type: "point" | "source" | "end" | "pan";
+  id?: string;
+  sign?: number;
+  start: { x: number; y: number };
+  pan: { x: number; y: number };
+} = null;
+$("stage").addEventListener("pointerdown", (event) => {
+  if (exporting || (event.button !== 0 && event.button !== 1)) return;
+  $("stage").focus();
+  const p = coordinate(event);
+  if (space || event.button === 1) {
+    drag = {
+      type: "pan",
+      start: { x: event.clientX, y: event.clientY },
+      pan: { ...pan },
+    };
+  } else if (mode === "source" && inside(p)) {
+    history.push(state);
+    const s = stroke().source,
+      a = (s.angle * Math.PI) / 180;
+    let sign: number | undefined;
+    for (const k of [-1, 1])
+      if (
+        Math.hypot(
+          p.x - s.x - ((Math.cos(a) * s.length) / 2) * k,
+          p.y - s.y - ((Math.sin(a) * s.length) / 2) * k,
+        ) <
+        12 / ((size().width / iw) * zoom)
+      )
+        sign = k;
+    drag = { type: sign ? "end" : "source", sign, start: p, pan };
+    if (!sign) {
+      s.x = p.x;
+      s.y = p.y;
+      requestRender();
+    }
+  } else if (mode === "points") {
+    const existing = nearest(p);
+    if (existing) {
+      selected = existing.id;
+      if (event.detail === 2) return;
+      history.push(state);
+      drag = { type: "point", id: existing.id, start: p, pan };
+      sync();
+    } else if (inside(p) && event.detail < 2) {
+      history.push(state);
+      const added = { ...p, id: crypto.randomUUID(), factor: 1 };
+      stroke().points.push(added);
+      selected = added.id;
+      if (stroke().points.length === 1) {
+        stroke().source.x = p.x;
+        stroke().source.y = p.y;
+      }
+      requestRender();
+    }
+  }
+  if (drag) $("stage").setPointerCapture(event.pointerId);
+});
+$("stage").addEventListener("pointermove", (event) => {
+  if (!drag) return;
+  const p = coordinate(event);
+  if (drag.type === "pan") {
+    fitted = false;
+    pan = {
+      x: drag.pan.x + event.clientX - drag.start.x,
+      y: drag.pan.y + event.clientY - drag.start.y,
+    };
+    layout();
+    return;
+  }
+  p.x = Math.max(0, Math.min(iw, p.x));
+  p.y = Math.max(0, Math.min(ih, p.y));
+  if (drag.type === "point") {
+    const q = stroke().points.find((q) => q.id === drag!.id);
+    if (q) {
+      q.x = p.x;
+      q.y = p.y;
+    }
+  } else if (drag.type === "source") {
+    stroke().source.x = p.x;
+    stroke().source.y = p.y;
+  } else {
+    const s = stroke().source,
+      dx = (p.x - s.x) * drag.sign!,
+      dy = (p.y - s.y) * drag.sign!;
+    s.angle = (Math.atan2(dy, dx) * 180) / Math.PI;
+    s.length = Math.max(1, Math.hypot(dx, dy) * 2);
+  }
+  requestRender();
+});
+for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+  $("stage").addEventListener(event, () => {
+    drag = null;
+  });
+$("stage").addEventListener("dblclick", (event) => {
+  if (exporting || mode !== "points") return;
+  const p = nearest(coordinate(event));
+  if (p)
+    edit(() => {
+      stroke().points = stroke().points.filter((q) => q.id !== p.id);
+      selected = null;
+    });
+});
+window.addEventListener("keydown", (event) => {
+  if (
+    event.target instanceof HTMLInputElement ||
+    event.target instanceof HTMLSelectElement
+  )
+    return;
+  if (event.code === "Space") {
+    event.preventDefault();
+    space = true;
+    $("stage").classList.add("panning");
+  }
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
+    event.preventDefault();
+    $(event.shiftKey ? "redo" : "undo").click();
+  }
+  if (event.key === "Escape") $("cancel").click();
+});
+window.addEventListener("keyup", (event) => {
+  if (event.code === "Space") {
+    space = false;
+    $("stage").classList.remove("panning");
+  }
+});
+window.addEventListener("blur", () => {
+  space = false;
+  drag = null;
+  $("stage").classList.remove("panning");
+});
+$("cancel").onclick = () => {
+  if (!running) return;
+  revision++;
+  queued = false;
+  completedRevision = -1;
+  setStatus("中断しました。再計算で続きを確認できます。");
+  $("recalculate").hidden = false;
+};
+$("recalculate").onclick = requestRender;
+$("load").onclick = () => $("file").click();
+$<HTMLInputElement>("file").onchange = async () => {
+  const file = $<HTMLInputElement>("file").files?.[0];
+  if (!file) return;
+  const id = ++loadId;
+  setStatus("写真を読み込み中…");
+  let bitmap: ImageBitmap | null = null;
+  try {
+    // Check signatures as well as browser MIME; don't accept a renamed TIFF or arbitrary SVG.
+    const bytes = new Uint8Array(await file.slice(0, 8).arrayBuffer());
+    if (
+      !(bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) &&
+      ![137, 80, 78, 71, 13, 10, 26, 10].every((n, i) => bytes[i] === n)
+    )
+      throw new Error("JPGまたはPNGを選んでください。");
+    bitmap = await createImageBitmap(file, {
+      imageOrientation: "from-image",
+      colorSpaceConversion: "default",
+    });
+    if (id !== loadId) {
+      bitmap.close();
+      return;
+    }
+    revision++;
+    queued = false;
+    // Let an in-flight render exit before releasing its source bitmap.
+    while (running) await new Promise((resolve) => setTimeout(resolve, 16));
+    if (id !== loadId) {
+      bitmap.close();
+      return;
+    }
+    sourceBitmap?.close();
+    sourceBitmap = bitmap;
+    source = bitmap;
+    originalFile = file;
+    iw = bitmap.width;
+    ih = bitmap.height;
+    state = initialState(iw, ih);
+    selected = null;
+    history.clear();
+    fitted = true;
+    pan = { x: 0, y: 0 };
+    $("image-name").textContent = file.name;
+    $("image-size").textContent = `${iw} × ${ih}`;
+    requestRender();
+    layout();
+  } catch (error) {
+    bitmap?.close();
+    setStatus(error instanceof Error ? error.message : String(error));
+  } finally {
+    $<HTMLInputElement>("file").value = "";
+  }
+};
+$("export").onclick = async () => {
+  if (exporting || running || completedRevision !== revision) return;
+  exporting = true;
+  $<HTMLFieldSetElement>("controls").disabled = true;
+  $<HTMLButtonElement>("export").disabled = true;
+  $<HTMLButtonElement>("load").disabled = true;
+  sync();
+  setStatus("PNGを書き出し中…");
+  try {
+    const blob = await renderer.exportPNG();
+    const url = URL.createObjectURL(blob),
+      a = document.createElement("a");
+    a.href = url;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    a.download = `${stroke().kind}_${state.mode}_${timestamp}.png`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    setStatus(
+      `書き出しました · ${size().width} × ${size().height} px · sRGB / 8bit`,
+    );
+  } catch (error) {
+    setStatus(error instanceof Error ? error.message : String(error));
+  } finally {
+    exporting = false;
+    $<HTMLFieldSetElement>("controls").disabled = false;
+    $<HTMLButtonElement>("load").disabled = false;
+    $<HTMLButtonElement>("export").disabled = !renderer.ready;
+    sync();
+  }
+};
+$<HTMLCanvasElement>("image").addEventListener("webglcontextlost", (event) => {
+  event.preventDefault();
+  revision++;
+  queued = false;
+  completedRevision = -1;
+  $<HTMLButtonElement>("export").disabled = true;
+  setStatus("GPUへの接続が失われました。復旧を待っています。");
+});
+$<HTMLCanvasElement>("image").addEventListener("webglcontextrestored", () => {
+  try {
+    renderer = new Renderer($<HTMLCanvasElement>("image"));
+    requestRender();
+  } catch (error) {
+    setStatus(String(error));
+  }
+});
+new ResizeObserver(layout).observe($("stage"));
+// Development-only diagnostics for reproducible browser validation. No source bytes leave the page.
+if (import.meta.env.DEV)
+  Object.defineProperty(window, "smudgeDebug", {
+    value: {
+      get state() {
+        return structuredClone(state);
+      },
+      get original() {
+        return originalFile?.name ?? null;
+      },
+      get ready() {
+        return !running && completedRevision === revision;
+      },
+      get limit() {
+        return renderer.limit;
+      },
+      get floatCarry() {
+        return renderer.floatCarry;
+      },
+      get gl() {
+        return renderer.gl;
+      },
+      get dimensions() {
+        return size();
+      },
+    },
+  });
+sync();
+layout();
+requestRender();
