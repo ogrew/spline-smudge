@@ -51,6 +51,7 @@ export class Renderer {
   private ribbon: Program;
   private vao: WebGLVertexArrayObject;
   private buffer: WebGLBuffer;
+  private bufferCapacity = 0;
   private photo?: Target;
   private working?: Target;
   private complete?: Target;
@@ -126,8 +127,10 @@ export class Renderer {
     g.uniform1i(this.location(p, key), unit);
   }
   private target(w: number, h: number): Target {
-    const g = this.gl,
-      texture = g.createTexture()!,
+    const g = this.gl;
+    // WebGL errors are sticky. Only errors raised by this allocation should decide its result.
+    while (g.getError() !== g.NO_ERROR) {}
+    const texture = g.createTexture()!,
       fbo = g.createFramebuffer()!;
     g.bindTexture(g.TEXTURE_2D, texture);
     g.texStorage2D(g.TEXTURE_2D, 1, g.RGBA8, w, h);
@@ -238,6 +241,7 @@ export class Renderer {
       scale = this.width / iw;
     this.copyTo(this.photo!, this.working!);
     const strokes = state.strokes.filter((stroke) => stroke.visible);
+    if (strokes.length) this.ribbonSetup(state.mode === "B");
     let chunk = performance.now();
     for (const [index, stroke] of strokes.entries()) {
       if (cancelled() || g.isContextLost()) return false;
@@ -264,10 +268,7 @@ export class Renderer {
       const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale), state.kind);
       if (samples.length > 1) {
         const verts = ribbonMesh(samples, scaled, state.mode);
-        g.bindVertexArray(this.vao);
-        g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
-        g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
-        this.ribbonSetup(state.mode === "B");
+        this.uploadRibbon(verts);
         g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
       }
       progress((index + 1) / Math.max(1, strokes.length));
@@ -299,6 +300,17 @@ export class Renderer {
     this.ready = true;
     progress(1);
     return true;
+  }
+  private uploadRibbon(vertices: Float32Array) {
+    const g = this.gl;
+    g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
+    if (vertices.byteLength > this.bufferCapacity) {
+      let capacity = Math.max(1024, this.bufferCapacity);
+      while (capacity < vertices.byteLength) capacity *= 2;
+      g.bufferData(g.ARRAY_BUFFER, capacity, g.DYNAMIC_DRAW);
+      this.bufferCapacity = capacity;
+    }
+    g.bufferSubData(g.ARRAY_BUFFER, 0, vertices);
   }
   private ribbonSetup(perPoint: boolean) {
     const g = this.gl,

@@ -67,6 +67,12 @@ let revision = 0,
   exporting = false,
   loadId = 0;
 let completedRevision = -1;
+let overlaySampleCache: {
+  revision: number;
+  strokeId: string;
+  samples: ReturnType<typeof sampleCurve>;
+} | null = null;
+let overlaySampleComputations = 0;
 const history = new History();
 const stroke = () => activeStroke(state);
 const point = () => stroke().points.find((p) => p.id === selected);
@@ -167,7 +173,19 @@ function overlay() {
     return;
   }
   if (guides) {
-    const sampled = sampleCurve(stroke(), Math.max(2, iw / 500), state.kind);
+    if (
+      !overlaySampleCache ||
+      overlaySampleCache.revision !== revision ||
+      overlaySampleCache.strokeId !== stroke().id
+    ) {
+      overlaySampleCache = {
+        revision,
+        strokeId: stroke().id,
+        samples: sampleCurve(stroke(), Math.max(2, iw / 500), state.kind),
+      };
+      overlaySampleComputations++;
+    }
+    const sampled = overlaySampleCache.samples;
     parts.push(
       `<polyline class="polygon" points="${pts.map((p) => `${p.x},${p.y}`).join(" ")}"/>`,
     );
@@ -884,6 +902,9 @@ if (import.meta.env.DEV)
       },
       get dimensions() {
         return size();
+      },
+      get overlaySampleComputations() {
+        return overlaySampleComputations;
       },
     },
   });
