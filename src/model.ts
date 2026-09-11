@@ -49,10 +49,10 @@ export function initialState(width: number, height: number): DocumentState {
         visible: true,
         points: [],
         width: Math.max(
-          0.01,
+          1,
           Math.min(
             Math.round(Math.min(width, height) * 0.13),
-            Math.max(width, height) / 10,
+            Math.floor(Math.max(width, height) / 10),
           ),
         ),
         tension: 0,

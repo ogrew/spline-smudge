@@ -36,7 +36,7 @@ document.querySelector("#app")!.innerHTML = `
   .map(([key, label]) => `<option value="${key}">${label}</option>`)
   .join(
     "",
-  )}</select><div id="stroke-list" class="stroke-list" aria-label="ストローク一覧"></div><div class="stroke-actions"><button id="stroke-add">＋ 追加</button><button id="stroke-copy">複製</button><button id="stroke-delete">削除</button><button id="stroke-up" title="手前へ" aria-label="線を手前へ">↑</button><button id="stroke-down" title="奥へ" aria-label="線を奥へ">↓</button></div><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 0.01, 160, 0.01)}<div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">点をクリア</button></div></section>
+  )}</select><div id="stroke-list" class="stroke-list" aria-label="ストローク一覧"></div><div class="stroke-actions"><button id="stroke-add">＋ 追加</button><button id="stroke-copy">複製</button><button id="stroke-delete">削除</button><button id="stroke-up" title="手前へ" aria-label="線を手前へ">↑</button><button id="stroke-down" title="奥へ" aria-label="線を奥へ">↓</button></div><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 160, 1)}<div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}<button id="factor-reset" class="factor-reset">1.00× に戻す</button></div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">点をクリア</button></div></section>
 <section><div class="section-title">03 <h2>採取線</h2></div><div id="source-selected" class="source-selected"></div>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
 <section><div class="section-title">04 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px</option><option value="5000">5000 px</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label></section></fieldset></aside>
 <div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
@@ -123,7 +123,9 @@ function sync() {
     continuity: [stroke().continuity, stroke().continuity.toFixed(2)],
     bias: [stroke().bias, stroke().bias.toFixed(2)],
   };
-  $<HTMLInputElement>("width").max = String(Math.max(iw, ih) / 10);
+  $<HTMLInputElement>("width").max = String(
+    Math.max(1, Math.floor(Math.max(iw, ih) / 10)),
+  );
   $<HTMLInputElement>("source-length").max = String(
     Math.ceil(Math.hypot(iw, ih)),
   );
@@ -132,6 +134,8 @@ function sync() {
     $(`${id}-value`).textContent = text;
   }
   $<HTMLInputElement>("factor").disabled = !point();
+  $<HTMLButtonElement>("factor-reset").disabled =
+    !point() || point()!.factor === 1;
   $("selected-name").textContent = point()
     ? `POINT ${String(stroke().points.indexOf(point()!) + 1).padStart(2, "0")}`
     : "点を選択してください";
@@ -368,7 +372,11 @@ for (const m of ["A", "B"] as const)
 $("kind").onchange = () =>
   edit(() => (state.kind = $<HTMLSelectElement>("kind").value as Kind));
 const changes: Record<string, (v: number) => void> = {
-  width: (v) => (stroke().width = v),
+  width: (v) =>
+    (stroke().width = Math.max(
+      1,
+      Math.min(Math.round(v), Math.max(1, Math.floor(Math.max(iw, ih) / 10))),
+    )),
   factor: (v) => {
     if (point()) point()!.factor = v;
   },
@@ -449,6 +457,12 @@ $("stroke-delete").onclick = () =>
   });
 $("stroke-up").onclick = () => edit(() => moveStroke(state, 1));
 $("stroke-down").onclick = () => edit(() => moveStroke(state, -1));
+$("factor-reset").onclick = () => {
+  if (point() && point()!.factor !== 1)
+    edit(() => {
+      point()!.factor = 1;
+    });
+};
 $("sample").onclick = () => edit(randomPoints);
 $("clear").onclick = () =>
   edit(() => {
@@ -490,15 +504,73 @@ function zoomBy(factor: number) {
 }
 $("plus").onclick = () => zoomBy(1.25);
 $("minus").onclick = () => zoomBy(0.8);
+let angleWheel = {
+  key: "",
+  time: 0,
+  revision: -1,
+  remainder: 0,
+  checkpoint: false,
+};
 $("stage").addEventListener(
   "wheel",
   (event) => {
     event.preventDefault();
+    if (event.shiftKey) {
+      if (
+        exporting ||
+        !point() ||
+        !stroke().visible ||
+        !inside(coordinate(event))
+      )
+        return;
+      const now = performance.now(),
+        key = `${state.activeId}:${selected}:${state.mode}`;
+      if (
+        key !== angleWheel.key ||
+        now - angleWheel.time > 400 ||
+        angleWheel.revision !== revision
+      )
+        angleWheel = {
+          key,
+          time: now,
+          revision,
+          remainder: 0,
+          checkpoint: false,
+        };
+      // Some browsers map Shift + a vertical wheel to deltaX.
+      const delta =
+        (event.deltaY || event.deltaX) *
+        (event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? $("stage").clientHeight
+            : 1);
+      angleWheel.remainder -= delta / 12;
+      const steps = Math.trunc(angleWheel.remainder);
+      angleWheel.time = now;
+      if (!steps) return;
+      angleWheel.remainder -= steps;
+      if (!angleWheel.checkpoint) {
+        history.push(state);
+        angleWheel.checkpoint = true;
+      }
+      updateSource(
+        "angle",
+        ((((Math.round(currentSource().angle) + steps + 180) % 360) + 360) %
+          360) -
+          180,
+      );
+      requestRender();
+      angleWheel.revision = revision;
+      return;
+    }
+    angleWheel.checkpoint = false;
+    angleWheel.revision = -1;
     zoomBy(Math.exp(-event.deltaY * 0.001));
   },
   { passive: false },
 );
-const coordinate = (event: PointerEvent | MouseEvent) => {
+const coordinate = (event: PointerEvent | MouseEvent | WheelEvent) => {
   const rect = $("art").getBoundingClientRect();
   return {
     x: ((event.clientX - rect.left) / rect.width) * iw,

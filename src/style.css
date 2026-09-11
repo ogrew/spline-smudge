@@ -625,3 +625,8 @@ progress {
 #kind {
   margin-bottom: 12px;
 }
+.factor-reset {
+  margin-top: 10px;
+  padding: 6px 9px;
+  font-size: 10px;
+}

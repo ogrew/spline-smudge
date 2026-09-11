@@ -631,3 +631,115 @@ test("all visible strokes are composited in order in A and B exports", async ({
     ]);
   }
 });
+
+test("integer base width, point factor reset, and Shift wheel angle editing", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await expect(page.locator("#width")).toHaveAttribute("step", "1");
+  await expect(page.locator("#width")).toHaveAttribute("min", "1");
+  await page.locator("#width").evaluate((input: HTMLInputElement) => {
+    input.value = "42.6";
+    input.dispatchEvent(new Event("input"));
+    input.dispatchEvent(new Event("change"));
+  });
+  await ready(page);
+  expect(Number.isInteger((await debug(page)).strokes[0].width)).toBe(true);
+  await page.locator("#factor").fill("2.5");
+  await ready(page);
+  await page.locator("#factor-reset").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].points[2].factor).toBe(1);
+  await expect(page.locator("#factor-value")).toHaveText("1.00 ×");
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].points[2].factor).toBe(2.5);
+  await page.locator("#mode-b").click();
+  await ready(page);
+  const before = (await debug(page)).strokes[0],
+    angle = before.points[2].source.angle,
+    zoom = await page.locator("#zoom-label").textContent();
+  const box = await page.locator("#art").boundingBox();
+  if (!box) throw new Error("No image");
+  const position = { x: box.x + box.width * 0.5, y: box.y + box.height * 0.5 };
+  await page.locator("#stage").evaluate((stage, p) => {
+    for (let i = 0; i < 3; i++)
+      stage.dispatchEvent(
+        new WheelEvent("wheel", {
+          clientX: p.x,
+          clientY: p.y,
+          deltaY: -120,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+  }, position);
+  await ready(page);
+  expect((await debug(page)).strokes[0].points[2].source.angle).toBe(
+    ((((angle + 30 + 180) % 360) + 360) % 360) - 180,
+  );
+  expect(await page.locator("#zoom-label").textContent()).toBe(zoom);
+  expect((await debug(page)).strokes[0].points[1]).toEqual(before.points[1]);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].points[2].source.angle).toBe(angle);
+  // Actual keyboard/wheel events: downward movement decreases the selected angle.
+  await page.mouse.move(position.x, position.y);
+  await page.keyboard.down("Shift");
+  await page.mouse.wheel(0, 120);
+  await page.keyboard.up("Shift");
+  await expect
+    .poll(async () => (await debug(page)).strokes[0].points[2].source.angle)
+    .toBe(((((angle - 10 + 180) % 360) + 360) % 360) - 180);
+  expect(await page.locator("#zoom-label").textContent()).toBe(zoom);
+  await page.locator("#mode-a").click();
+  await ready(page);
+  const a = (await debug(page)).strokes[0].source.angle;
+  await page
+    .locator("#stage")
+    .evaluate(
+      (stage, p) =>
+        stage.dispatchEvent(
+          new WheelEvent("wheel", {
+            clientX: p.x,
+            clientY: p.y,
+            deltaY: -120,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      position,
+    );
+  await ready(page);
+  expect((await debug(page)).strokes[0].source.angle).toBe(
+    ((((a + 10 + 180) % 360) + 360) % 360) - 180,
+  );
+  await page.locator("#stroke-add").click();
+  await ready(page);
+  await expect(page.locator("#factor-reset")).toBeDisabled();
+  await page
+    .locator("#stage")
+    .evaluate(
+      (stage, p) =>
+        stage.dispatchEvent(
+          new WheelEvent("wheel", {
+            clientX: p.x,
+            clientY: p.y,
+            deltaY: -120,
+            shiftKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      position,
+    );
+  expect(await page.locator("#zoom-label").textContent()).toBe(zoom);
+  await page.mouse.move(position.x, position.y);
+  await page.mouse.wheel(0, 120);
+  await expect
+    .poll(() => page.locator("#zoom-label").textContent())
+    .not.toBe(zoom);
+});
