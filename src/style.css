@@ -572,3 +572,53 @@ progress {
   letter-spacing: 0.4px;
   margin: 12px 0;
 }
+.stroke-list {
+  max-height: 200px;
+  overflow: auto;
+  scrollbar-width: thin;
+  margin-bottom: 8px;
+}
+.stroke-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  margin-bottom: 4px;
+  border: 1px solid #3b4440;
+  border-radius: 4px;
+  background: #242b29;
+}
+.stroke-item.is-active {
+  border-color: #bdcc93;
+  background: #353e31;
+}
+.stroke-item > input {
+  flex-shrink: 0;
+}
+.stroke-item > button {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 7px 0;
+  border: 0 !important;
+  background: transparent !important;
+  font-size: 11px;
+}
+.stroke-item small {
+  display: block;
+  font-size: 9px;
+  color: #a4b1a6;
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stroke-actions {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+.stroke-actions button {
+  padding: 7px 9px;
+  font-size: 10px;
+}

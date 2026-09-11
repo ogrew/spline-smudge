@@ -1,5 +1,5 @@
 import type { DocumentState, Stroke } from "./model.ts";
-import { activeStroke, outputSize } from "./model.ts";
+import { outputSize } from "./model.ts";
 import { sampleCurve } from "./geometry.ts";
 import { ribbonMesh, ribbonStride } from "./ribbon-mesh.ts";
 import { colorInterpolationGLSL } from "./color-interpolation.ts";
@@ -235,37 +235,46 @@ export class Renderer {
   ): Promise<boolean> {
     this.prepare(source, iw, ih, state);
     const g = this.gl,
-      stroke = activeStroke(state),
       scale = this.width / iw;
     this.copyTo(this.photo!, this.working!);
-    const scaled: Stroke = {
-      ...stroke,
-      width: stroke.width * scale,
-      points: stroke.points.map((p) => ({
-        ...p,
-        x: p.x * scale,
-        y: p.y * scale,
+    const strokes = state.strokes.filter((stroke) => stroke.visible);
+    let chunk = performance.now();
+    for (const [index, stroke] of strokes.entries()) {
+      if (cancelled() || g.isContextLost()) return false;
+      const scaled: Stroke = {
+        ...stroke,
+        width: stroke.width * scale,
+        points: stroke.points.map((p) => ({
+          ...p,
+          x: p.x * scale,
+          y: p.y * scale,
+          source: {
+            angle: p.source?.angle ?? stroke.source.angle,
+            length: (p.source?.length ?? stroke.source.length) * scale,
+          },
+        })),
         source: {
-          angle: p.source?.angle ?? stroke.source.angle,
-          length: (p.source?.length ?? stroke.source.length) * scale,
+          ...stroke.source,
+          x: stroke.source.x * scale,
+          y: stroke.source.y * scale,
+          length: stroke.source.length * scale,
         },
-      })),
-      source: {
-        ...stroke.source,
-        x: stroke.source.x * scale,
-        y: stroke.source.y * scale,
-        length: stroke.source.length * scale,
-      },
-    };
-    // Sample in source-image distance so zoom does not change the mesh.
-    const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale));
-    if (samples.length > 1) {
-      const verts = ribbonMesh(samples, scaled, state.mode);
-      g.bindVertexArray(this.vao);
-      g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
-      g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
-      this.ribbonSetup(state.mode === "B");
-      g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
+      };
+      // Sample in source-image distance so zoom does not change the mesh.
+      const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale));
+      if (samples.length > 1) {
+        const verts = ribbonMesh(samples, scaled, state.mode);
+        g.bindVertexArray(this.vao);
+        g.bindBuffer(g.ARRAY_BUFFER, this.buffer);
+        g.bufferData(g.ARRAY_BUFFER, verts, g.DYNAMIC_DRAW);
+        this.ribbonSetup(state.mode === "B");
+        g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
+      }
+      progress((index + 1) / Math.max(1, strokes.length));
+      if (performance.now() - chunk > 8) {
+        await frame();
+        chunk = performance.now();
+      }
     }
     if (cancelled() || g.isContextLost()) return false;
     // Wait for GPU completion without blocking the UI; cancelled jobs never replace the completed image.

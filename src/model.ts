@@ -15,6 +15,8 @@ export const kinds: Record<Kind, string> = {
 };
 export type Stroke = {
   id: string;
+  name: string;
+  visible: boolean;
   points: Point[];
   kind: Kind;
   width: number;
@@ -28,6 +30,7 @@ export type DocumentState = {
   mode: "A" | "B";
   strokes: Stroke[];
   activeId: string;
+  nextStrokeNumber: number;
   background: string;
   longEdge: number;
 };
@@ -35,11 +38,14 @@ export function initialState(width: number, height: number): DocumentState {
   return {
     mode: "A",
     activeId: "stroke-1",
+    nextStrokeNumber: 2,
     background: "#f3f0e8",
     longEdge: 2000,
     strokes: [
       {
         id: "stroke-1",
+        name: "Stroke 01",
+        visible: true,
         points: [],
         kind: "centripetal",
         width: Math.round(Math.min(width, height) * 0.13),
@@ -103,4 +109,46 @@ export function pointSource(
     angle: point.source?.angle ?? stroke.source.angle,
     length: point.source?.length ?? stroke.source.length,
   };
+}
+
+/** Array order is back to front. Names are stable when order changes. */
+export function addStroke(state: DocumentState, duplicate = false): Stroke {
+  const previous = activeStroke(state);
+  const next = structuredClone(previous);
+  next.id = crypto.randomUUID();
+  next.name = `Stroke ${String(state.nextStrokeNumber++).padStart(2, "0")}`;
+  next.visible = true;
+  next.points = duplicate
+    ? next.points.map((p) => ({ ...p, id: crypto.randomUUID() }))
+    : [];
+  state.strokes.push(next);
+  state.activeId = next.id;
+  return next;
+}
+export function deleteStroke(state: DocumentState) {
+  const index = state.strokes.findIndex((s) => s.id === state.activeId);
+  // Keep an empty editable stroke when removing the last one.
+  if (state.strokes.length === 1) addStroke(state);
+  state.strokes.splice(index, 1);
+  state.activeId = state.strokes[Math.min(index, state.strokes.length - 1)].id;
+}
+export function moveStroke(state: DocumentState, direction: -1 | 1) {
+  const index = state.strokes.findIndex((s) => s.id === state.activeId),
+    target = index + direction;
+  if (target < 0 || target >= state.strokes.length) return;
+  [state.strokes[index], state.strokes[target]] = [
+    state.strokes[target],
+    state.strokes[index],
+  ];
+}
+export function exportKind(state: DocumentState) {
+  return (
+    [
+      ...new Set(
+        state.strokes
+          .filter((s) => s.visible && s.points.length > 1)
+          .map((s) => s.kind),
+      ),
+    ].join("-") || "image"
+  );
 }

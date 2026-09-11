@@ -2,6 +2,10 @@ import "./style.css";
 import { Renderer } from "./renderer.ts";
 import {
   History,
+  addStroke,
+  deleteStroke,
+  moveStroke,
+  exportKind,
   activeStroke,
   initialState,
   kinds,
@@ -26,13 +30,13 @@ const range = (
 document.querySelector("#app")!.innerHTML = `
 <header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">画像を選択 <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>エクスポート ↓</button></div></header>
 <main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>カラーピック</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯</span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>点ごとの色</span></button></div></section>
-<section><div class="section-title">02 <h2>スプライン</h2></div><div class="stroke-row"><span class="dot"></span><span>Stroke 01</span><span class="muted">編集中</span></div><label class="sr-only" for="kind">スプラインの種類</label><select id="kind">${Object.entries(
+<section><div class="section-title">02 <h2>スプライン</h2></div><div id="stroke-list" class="stroke-list" aria-label="ストローク一覧"></div><div class="stroke-actions"><button id="stroke-add">＋ 追加</button><button id="stroke-copy">複製</button><button id="stroke-delete">削除</button><button id="stroke-up" title="手前へ" aria-label="線を手前へ">↑</button><button id="stroke-down" title="奥へ" aria-label="線を奥へ">↓</button></div><label class="sr-only" for="kind">スプラインの種類</label><select id="kind">${Object.entries(
   kinds,
 )
   .map(([key, label]) => `<option value="${key}">${label}</option>`)
   .join(
     "",
-  )}</select><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 500, 1)}<div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">線を消す</button></div></section>
+  )}</select><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 500, 1)}<div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}</div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">点をクリア</button></div></section>
 <section><div class="section-title">03 <h2>採取線</h2></div><div id="source-selected" class="source-selected"></div>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
 <section><div class="section-title">04 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px</option><option value="5000">5000 px</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label></section></fieldset></aside>
 <div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
@@ -86,6 +90,17 @@ const setStatus = (text: string) => {
   $("status").textContent = text;
 };
 function sync() {
+  $("stroke-list").innerHTML = [...state.strokes]
+    .reverse()
+    .map(
+      (s) =>
+        `<div class="stroke-item ${s.id === state.activeId ? "is-active" : ""}" data-stroke-id="${s.id}"><input type="checkbox" data-visibility="${s.id}" aria-label="${s.name}を表示" ${s.visible ? "checked" : ""}><button type="button" data-select-stroke="${s.id}" aria-pressed="${s.id === state.activeId}"><span>${s.name}</span><small>${kinds[s.kind]} · ${s.points.length}点${s.visible ? "" : " · 非表示"}</small></button></div>`,
+    )
+    .join("");
+  const strokeIndex = state.strokes.findIndex((s) => s.id === state.activeId);
+  $<HTMLButtonElement>("stroke-up").disabled =
+    strokeIndex === state.strokes.length - 1;
+  $<HTMLButtonElement>("stroke-down").disabled = strokeIndex === 0;
   $<HTMLSelectElement>("kind").value = stroke().kind;
   $("mode-a").setAttribute("aria-pressed", String(state.mode === "A"));
   $("mode-b").setAttribute("aria-pressed", String(state.mode === "B"));
@@ -130,7 +145,10 @@ function sync() {
     : "original";
   const s = size();
   $("dimensions").textContent = `${s.width} × ${s.height} px`;
-  $("empty-hint").hidden = stroke().points.length > 0;
+  $("empty-hint").textContent = stroke().visible
+    ? "写真の上をクリックして、曲線をつくる"
+    : `${stroke().name} · 非表示`;
+  $("empty-hint").hidden = stroke().visible && stroke().points.length > 0;
   overlay();
 }
 function overlay() {
@@ -140,6 +158,10 @@ function overlay() {
     r = 5 / scale;
   view.setAttribute("viewBox", `0 0 ${iw} ${ih}`);
   const parts: string[] = [];
+  if (!stroke().visible) {
+    view.innerHTML = "";
+    return;
+  }
   if (guides) {
     const sampled = sampleCurve(stroke(), Math.max(2, iw / 500));
     parts.push(
@@ -213,10 +235,12 @@ function layout() {
   overlay();
 }
 function requestRender() {
-  const first = stroke().points[0];
-  if (first) {
-    stroke().source.x = first.x;
-    stroke().source.y = first.y;
+  for (const s of state.strokes) {
+    const first = s.points[0];
+    if (first) {
+      s.source.x = first.x;
+      s.source.y = first.y;
+    }
   }
   revision++;
   queued = true;
@@ -379,6 +403,46 @@ $("resolution").onchange = () =>
   });
 $("background").onchange = () =>
   edit(() => (state.background = $<HTMLInputElement>("background").value));
+$("stroke-list").addEventListener("click", (event) => {
+  if (exporting) return;
+  const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+    "[data-select-stroke]",
+  );
+  if (!button) return;
+  state.activeId = button.dataset.selectStroke!;
+  selected = null;
+  drag = null;
+  sync();
+});
+$("stroke-list").addEventListener("change", (event) => {
+  if (exporting) return;
+  const input = event.target as HTMLInputElement;
+  const target = state.strokes.find((s) => s.id === input.dataset.visibility);
+  if (target)
+    edit(() => {
+      target.visible = input.checked;
+    });
+});
+$("stroke-add").onclick = () =>
+  edit(() => {
+    addStroke(state);
+    selected = null;
+    drag = null;
+  });
+$("stroke-copy").onclick = () =>
+  edit(() => {
+    addStroke(state, true);
+    selected = null;
+    drag = null;
+  });
+$("stroke-delete").onclick = () =>
+  edit(() => {
+    deleteStroke(state);
+    selected = null;
+    drag = null;
+  });
+$("stroke-up").onclick = () => edit(() => moveStroke(state, 1));
+$("stroke-down").onclick = () => edit(() => moveStroke(state, -1));
 $("sample").onclick = () => edit(randomPoints);
 $("clear").onclick = () =>
   edit(() => {
@@ -395,6 +459,7 @@ $("undo").onclick = () => {
 $("redo").onclick = () => {
   if (exporting) return;
   state = history.redo(state);
+  if (!point()) selected = null;
   requestRender();
   layout();
 };
@@ -456,7 +521,7 @@ $("stage").addEventListener("pointerdown", (event) => {
       start: { x: event.clientX, y: event.clientY },
       pan: { ...pan },
     };
-  } else {
+  } else if (stroke().visible) {
     const existing = nearest(p);
     if (existing) {
       selected = existing.id;
@@ -514,7 +579,7 @@ for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
     drag = null;
   });
 $("stage").addEventListener("dblclick", (event) => {
-  if (exporting) return;
+  if (exporting || !stroke().visible) return;
   const p = nearest(coordinate(event));
   if (p)
     edit(() => {
@@ -626,7 +691,7 @@ $("export").onclick = async () => {
       a = document.createElement("a");
     a.href = url;
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    a.download = `${stroke().kind}_${state.mode}_${timestamp}.png`;
+    a.download = `${exportKind(state)}_${state.mode}_${timestamp}.png`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
     setStatus(

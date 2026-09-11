@@ -430,3 +430,196 @@ test("B shader reproduces point colors and interpolates RGB without picking up i
   expect(result.changed).toEqual(result.baseline[1]);
   expect(result.glError).toBe(0);
 });
+
+test("multiple stroke selection, duplication, visibility, ordering and history", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const initial = (await debug(page)).strokes[0];
+  await page.locator("#stroke-copy").click();
+  await ready(page);
+  let state = await debug(page),
+    copy = state.strokes[1];
+  expect(copy.name).toBe("Stroke 02");
+  expect(copy.points.length).toBe(initial.points.length);
+  expect(copy.points[0].id).not.toBe(initial.points[0].id);
+  await page.locator("#kind").selectOption("natural");
+  await ready(page);
+  expect((await debug(page)).strokes[0]).toEqual(initial);
+  await page.locator("#mode-b").click();
+  await ready(page);
+  const rect = await page.locator("#art").boundingBox();
+  if (!rect) throw new Error("No image");
+  const p = copy.points[0];
+  await page.mouse.click(
+    rect.x + (p.x / 1600) * rect.width,
+    rect.y + (p.y / 1100) * rect.height,
+  );
+  await page.locator("#angle").fill("30");
+  await ready(page);
+  const edited = (await debug(page)).strokes[1];
+  expect(edited.points[0].source.angle).toBe(30);
+  await page.locator(`[data-select-stroke="${initial.id}"]`).click();
+  expect((await debug(page)).strokes[0]).toEqual(initial);
+  expect(await page.locator("#kind").inputValue()).toBe(initial.kind);
+  expect(await page.locator(".point").count()).toBe(initial.points.length);
+  await page.locator("#stroke-up").click();
+  await ready(page);
+  expect((await debug(page)).strokes.map((s: any) => s.id)).toEqual([
+    copy.id,
+    initial.id,
+  ]);
+  expect(
+    await page
+      .locator("[data-select-stroke]")
+      .first()
+      .getAttribute("data-select-stroke"),
+  ).toBe(initial.id);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes.map((s: any) => s.id)).toEqual([
+    initial.id,
+    copy.id,
+  ]);
+  await page.locator(`[data-visibility="${initial.id}"]`).uncheck();
+  await ready(page);
+  expect(await page.locator("#overlay > *").count()).toBe(0);
+  const count = initial.points.length;
+  await page.mouse.click(
+    rect.x + rect.width * 0.45,
+    rect.y + rect.height * 0.45,
+  );
+  expect((await debug(page)).strokes[0].points.length).toBe(count);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].visible).toBe(true);
+  await page.locator("#stroke-add").click();
+  await ready(page);
+  state = await debug(page);
+  expect(state.strokes.length).toBe(3);
+  expect(state.strokes[2].points).toEqual([]);
+  await page.mouse.click(rect.x + rect.width * 0.4, rect.y + rect.height * 0.4);
+  await ready(page);
+  expect((await debug(page)).strokes[2].points.length).toBe(1);
+  await page.locator("#stroke-delete").click();
+  await ready(page);
+  expect((await debug(page)).strokes.length).toBe(2);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[2].points.length).toBe(1);
+  await page.locator("#stroke-delete").click();
+  await ready(page);
+  await page.locator("#resolution").selectOption("5000");
+  await ready(page);
+  const output = await download(page, "spline-smudge-multiple");
+  expect([output.width, output.height]).toEqual([5000, 3438]);
+  expect(output.filename).toMatch(/^centripetal-natural_B_/);
+  await page.screenshot({ path: "/private/tmp/spline-smudge-multiple-ui.png" });
+  await page.locator("#stroke-delete").click();
+  await ready(page);
+  await page.locator("#stroke-delete").click();
+  await ready(page);
+  state = await debug(page);
+  expect(state.strokes.length).toBe(1);
+  expect(state.strokes[0].points).toEqual([]);
+});
+
+test("all visible strokes are composited in order in A and B exports", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const results = await page.evaluate(async () => {
+    const { Renderer } = await import("/src/renderer.ts");
+    const { initialState, activeStroke, addStroke, moveStroke } =
+      await import("/src/model.ts");
+    const source = document.createElement("canvas");
+    source.width = 200;
+    source.height = 150;
+    const x = source.getContext("2d")!;
+    x.fillStyle = "white";
+    x.fillRect(0, 0, 200, 150);
+    x.fillStyle = "red";
+    x.fillRect(10, 60, 20, 30);
+    x.fillRect(170, 60, 20, 30);
+    x.fillStyle = "blue";
+    x.fillRect(90, 10, 20, 20);
+    x.fillRect(90, 120, 20, 20);
+    const r = new Renderer(document.createElement("canvas")),
+      state = initialState(200, 150);
+    state.longEdge = 200;
+    const red = activeStroke(state);
+    red.width = 20;
+    red.source = { x: 20, y: 75, angle: 90, length: 10 };
+    red.points = [20, 180].map((x, i) => ({
+      id: `r${i}`,
+      x,
+      y: 75,
+      factor: 1,
+      source: { angle: 90, length: 10 },
+    }));
+    const blue = addStroke(state);
+    blue.width = 20;
+    blue.source = { x: 100, y: 20, angle: 0, length: 10 };
+    blue.points = [20, 130].map((y, i) => ({
+      id: `b${i}`,
+      x: 100,
+      y,
+      factor: 1,
+      source: { angle: 0, length: 10 },
+    }));
+    const render = async () => {
+      await r.render(
+        source,
+        200,
+        150,
+        state,
+        () => false,
+        () => {},
+      );
+      const b = await createImageBitmap(await r.exportPNG()),
+        c = document.createElement("canvas");
+      c.width = 200;
+      c.height = 150;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(b, 0, 0);
+      const pixels = [
+        [100, 75],
+        [60, 75],
+        [100, 50],
+      ].map(([x, y]) => Array.from(ctx.getImageData(x, y, 1, 1).data));
+      b.close();
+      return pixels;
+    };
+    const result = [];
+    for (const mode of ["A", "B"] as const) {
+      state.mode = mode;
+      state.strokes = [red, blue];
+      blue.visible = true;
+      state.activeId = blue.id;
+      const top = await render();
+      moveStroke(state, -1);
+      const reordered = await render();
+      state.strokes = [red, blue];
+      blue.visible = false;
+      const hidden = await render();
+      result.push({ mode, top, reordered, hidden });
+    }
+    r.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return result;
+  });
+  for (const r of results) {
+    expect(r.top).toEqual([
+      [0, 0, 255, 255],
+      [255, 0, 0, 255],
+      [0, 0, 255, 255],
+    ]);
+    expect(r.reordered[0]).toEqual([255, 0, 0, 255]);
+    expect(r.hidden).toEqual([
+      [255, 0, 0, 255],
+      [255, 0, 0, 255],
+      [255, 255, 255, 255],
+    ]);
+  }
+});
