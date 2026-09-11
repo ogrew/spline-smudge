@@ -305,7 +305,13 @@ function randomPoints() {
       x: iw * (0.05 + Math.random() * 0.9),
       y: ih * (0.05 + Math.random() * 0.9),
       factor: 0.5 + Math.random() * 1.3,
-      source: { angle: stroke().source.angle, length: stroke().source.length },
+      source: {
+        angle: Math.round(Math.random() * 360 - 180),
+        length: Math.max(
+          1,
+          Math.round(Math.min(iw, ih) * (0.05 + Math.random() * 0.45)),
+        ),
+      },
     }),
   );
   selected = stroke().points[2].id;

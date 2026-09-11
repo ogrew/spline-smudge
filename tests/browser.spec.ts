@@ -65,6 +65,12 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
     ).toBe(true);
     expect(points[0].x).toBeCloseTo(1600 * (0.05 + value * 0.9));
     expect(points[0].y).toBeCloseTo(1100 * (0.05 + value * 0.9));
+    for (const point of points) {
+      expect(point.source.angle).toBe(Math.round(value * 360 - 180));
+      expect(point.source.length).toBe(
+        Math.max(1, Math.round(1100 * (0.05 + value * 0.45))),
+      );
+    }
   }
   await page.locator("#sample").click();
   await ready(page);
