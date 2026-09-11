@@ -817,10 +817,86 @@ test("no-op editing, blank double click history, point drag and cursor zoom", as
     x: (cursor.x - before.x) / before.width,
     y: (cursor.y - before.y) / before.height,
   };
+  const sampleComputations = (await debug(page)).overlaySampleComputations;
   await page.mouse.move(cursor.x, cursor.y);
   await page.mouse.wheel(0, -240);
   const after = await page.locator("#art").boundingBox();
   if (!after) throw new Error("No image after zoom");
   expect((cursor.x - after.x) / after.width).toBeCloseTo(beforeRelative.x, 3);
   expect((cursor.y - after.y) / after.height).toBeCloseTo(beforeRelative.y, 3);
+  expect((await debug(page)).overlaySampleComputations).toBe(
+    sampleComputations,
+  );
+});
+
+test("renderer clears stale errors and reuses ribbon GPU state", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    const { Renderer } = await import("/src/renderer.ts");
+    const { initialState, activeStroke, addStroke } =
+      await import("/src/model.ts");
+    const canvas = document.createElement("canvas"),
+      renderer = new Renderer(canvas),
+      gl = renderer.gl as any;
+
+    gl.enable(0xffffffff); // Queue INVALID_ENUM before an otherwise valid allocation.
+    const target = (renderer as any).target(8, 8);
+    (renderer as any).drop(target);
+    const allocationError = gl.getError();
+
+    let allocations = 0,
+      uploads = 0,
+      setups = 0;
+    const bufferData = gl.bufferData.bind(gl),
+      bufferSubData = gl.bufferSubData.bind(gl),
+      ribbonSetup = (renderer as any).ribbonSetup.bind(renderer);
+    gl.bufferData = (...args: any[]) => {
+      if (args[0] === gl.ARRAY_BUFFER) allocations++;
+      return bufferData(...args);
+    };
+    gl.bufferSubData = (...args: any[]) => {
+      if (args[0] === gl.ARRAY_BUFFER) uploads++;
+      return bufferSubData(...args);
+    };
+    (renderer as any).ribbonSetup = (...args: any[]) => {
+      setups++;
+      return ribbonSetup(...args);
+    };
+
+    const image = document.createElement("canvas"),
+      state = initialState(200, 150),
+      stroke = activeStroke(state);
+    image.width = 200;
+    image.height = 150;
+    image.getContext("2d")!.fillRect(0, 0, 200, 150);
+    state.longEdge = 200;
+    stroke.points = [
+      { id: "a", x: 20, y: 30, factor: 1 },
+      { id: "b", x: 100, y: 120, factor: 1 },
+      { id: "c", x: 180, y: 30, factor: 1 },
+    ];
+    addStroke(state, true);
+    for (let i = 0; i < 2; i++)
+      await renderer.render(
+        image,
+        200,
+        150,
+        state,
+        () => false,
+        () => {},
+      );
+    const finalError = gl.getError();
+    gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return { allocationError, finalError, allocations, uploads, setups };
+  });
+  expect(result).toEqual({
+    allocationError: 0,
+    finalError: 0,
+    allocations: 1,
+    uploads: 4,
+    setups: 2,
+  });
 });
