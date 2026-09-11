@@ -7,6 +7,33 @@ export type Sample = Vec & {
   distance: number;
 };
 export const dist = (a: Vec, b: Vec) => Math.hypot(a.x - b.x, a.y - b.y);
+export function randomizeWidthsByCorner(
+  points: Point[],
+  random: () => number = Math.random,
+): Point[] {
+  return points.map((point, i) => {
+    const previous = points[i - 1],
+      next = points[i + 1];
+    if (
+      !previous ||
+      !next ||
+      dist(previous, point) < 1e-7 ||
+      dist(next, point) < 1e-7
+    )
+      return { ...point, factor: 1 };
+    const ax = previous.x - point.x,
+      ay = previous.y - point.y;
+    const bx = next.x - point.x,
+      by = next.y - point.y;
+    // Inward vectors: positive dot means an unsigned angle below 90 degrees.
+    const acute = ax * bx + ay * by > 0;
+    // Uniform choices at the factor slider's 0.05 step, including both bounds.
+    const factor = acute
+      ? (40 + Math.floor(random() * 161)) / 20
+      : Math.floor(random() * 11) / 20;
+    return { ...point, factor };
+  });
+}
 const add = (a: Vec, b: Vec, u = 1, v = 1): Vec => ({
   x: a.x * u + b.x * v,
   y: a.y * u + b.y * v,

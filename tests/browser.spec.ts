@@ -68,6 +68,7 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
     expect(points[0].x).toBeCloseTo(1600 * (0.05 + value * 0.9));
     expect(points[0].y).toBeCloseTo(1100 * (0.05 + value * 0.9));
     for (const point of points) {
+      expect(point.factor).toBe(1); // All positions coincide with a constant RNG.
       expect(point.source.angle).toBe(Math.round(value * 360 - 180));
       expect(point.source.length).toBe(
         Math.max(1, Math.round(1100 * (0.05 + value * 0.45))),
@@ -76,6 +77,18 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   }
   await page.locator("#sample").click();
   await ready(page);
+  const generated = (await debug(page)).strokes[0].points;
+  expect(generated[0].factor).toBe(1);
+  expect(generated.at(-1).factor).toBe(1);
+  for (let i = 1; i < generated.length - 1; i++) {
+    const a = generated[i - 1],
+      p = generated[i],
+      b = generated[i + 1];
+    const acute = (a.x - p.x) * (b.x - p.x) + (a.y - p.y) * (b.y - p.y) > 0;
+    expect(p.factor).toBeGreaterThanOrEqual(acute ? 2 : 0);
+    expect(p.factor).toBeLessThanOrEqual(acute ? 10 : 0.5);
+    expect(p.factor * 20).toBeCloseTo(Math.round(p.factor * 20));
+  }
   for (const kind of ["catmull", "bspline", "centripetal", "natural", "tcb"]) {
     await page.locator("#kind").selectOption(kind);
     await ready(page);

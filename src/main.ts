@@ -15,7 +15,7 @@ import {
   type DocumentState,
   type Kind,
 } from "./model.ts";
-import { sampleCurve } from "./geometry.ts";
+import { sampleCurve, randomizeWidthsByCorner } from "./geometry.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -308,7 +308,7 @@ function randomPoints() {
       id: crypto.randomUUID(),
       x: iw * (0.05 + Math.random() * 0.9),
       y: ih * (0.05 + Math.random() * 0.9),
-      factor: 0.5 + Math.random() * 1.3,
+      factor: 1,
       source: {
         angle: Math.round(Math.random() * 360 - 180),
         length: Math.max(
@@ -318,6 +318,7 @@ function randomPoints() {
       },
     }),
   );
+  stroke().points = randomizeWidthsByCorner(stroke().points);
   selected = stroke().points[2].id;
   const first = stroke().points[0];
   stroke().source.x = first.x;
