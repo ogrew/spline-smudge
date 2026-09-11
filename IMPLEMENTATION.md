@@ -30,12 +30,12 @@ Aは始点を中心とする1本の採取線を帯全体に使う。Bは各制�
 
 ## 補間方式の変更箇所
 
-`src/color-interpolation.ts` にGLSLの2関数を分離。
+`src/color-interpolation.ts` にGLSLを分離。方式は `mixMode` ユニフォームで選択するため、切り替えでシェーダーを再コンパイルしない。
 
-- `colorWeight(t)`：区間の補間量。現在は `smoothstep(0,1,t)` で、点の前後の変化を穏やかにする。
-- `interpolateColor(a,b,t)`：色の混ぜ方。現在は符号化されたsRGBのRGB成分を直接補間。linear-light RGB、HSV等への変更はこの関数に変換・逆変換を追加する。新しい方式は画素テストも更新する。
+- `colorWeight(t)`：区間の補間量。現在は `smoothstep(0,1,t)` で、点の前後の変化を穏やかにする。全方式で共通。
+- `interpolateColor(a,b,t)`：色の混ぜ方。sRGB直接補間（従来・既定）、OKLab、OKLCH（色相の近回り／遠回り）、色相回転の5方式。OKLab系はsRGB→linear→OKLabの変換・逆変換をGLSLで行い、結果を0〜1へclampして符号化sRGBに戻す。
 
-現時点で色空間の選択UIはない。出力はsRGB・8bit PNG。HSVの色相の回り方や無彩色の扱い、CMYKのプロファイル等は、その方式を追加する時点で決める。
+OKLCHの無彩色（彩度≈0）は色相が不定になるため、相手側の色相を借りる。`atan(0,0)` は未定義なので彩度の閾値でガードする。色相回転は近回り経路に**整数回転**（±2πの倍数）だけを追加する仕様。任意角度を足すと区間終端の色が採取色からずれ、区間の継ぎ目の色一致が壊れるため、回転数に限定した。選択状態は `DocumentState.mix`（mode / turns）に保持し、履歴・スナップショット・エクスポートに含む。Bモードのみに効き、Aは単一サンプルのため不変。出力はsRGB・8bit PNG。
 
 ## 状態・描画・出力
 

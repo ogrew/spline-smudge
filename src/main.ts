@@ -12,6 +12,8 @@ import {
   outputSize,
   pointSource,
   reactionModes,
+  mixModes,
+  type MixMode,
   type SourceSettings,
   type DocumentState,
   type Kind,
@@ -31,7 +33,13 @@ const range = (
   `<label class="range-label" for="${id}">${label}<output id="${id}-value"></output></label><input id="${id}" type="range" min="${min}" max="${max}" step="${step}">`;
 document.querySelector("#app")!.innerHTML = `
 <header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">画像を選択 <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>エクスポート ↓</button></div></header>
-<main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>カラーピック</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯</span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>点ごとの色</span></button></div></section>
+<main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>カラーピック</h2></div><div class="modes"><button id="mode-a" aria-pressed="true"><b>A</b><span>色の帯</span></button><button id="mode-b" aria-pressed="false"><b>B</b><span>点ごとの色</span></button></div><label class="range-label" for="mix-mode">Bの色補間</label><select id="mix-mode">${Object.entries(
+  mixModes,
+)
+  .map(([key, label]) => `<option value="${key}">${label}</option>`)
+  .join(
+    "",
+  )}</select><div id="mix-spin-row" hidden>${range("mix-spin", "色相の回転数", -2, 2, 1)}</div></section>
 <section><div class="section-title">02 <h2>スプライン</h2></div><label class="sr-only" for="kind">作品全体のスプライン</label><select id="kind">${Object.entries(
   kinds,
 )
@@ -147,11 +155,17 @@ function sync() {
       options().reaction.edgeAmount.toFixed(2),
     ],
     "shade-amount": [options().shade.amount, options().shade.amount.toFixed(2)],
+    "mix-spin": [
+      state.mix.turns,
+      `${state.mix.turns > 0 ? "+" : ""}${state.mix.turns} 回転`,
+    ],
   };
   // Option settings appear only while their toggle is on.
   $<HTMLInputElement>("reaction").checked = options().reaction.on;
   $<HTMLInputElement>("shade").checked = options().shade.on;
   $<HTMLSelectElement>("reaction-mode").value = options().reaction.mode;
+  $<HTMLSelectElement>("mix-mode").value = state.mix.mode;
+  $("mix-spin-row").hidden = state.mix.mode !== "hueSpin";
   $("reaction-settings").hidden = !options().reaction.on;
   $("reaction-displace").hidden = options().reaction.mode !== "displace";
   $("reaction-edge").hidden = options().reaction.mode !== "edgeWidth";
@@ -434,6 +448,7 @@ const changes: Record<string, (v: number) => void> = {
   "displace-amount": (v) => (options().reaction.displaceAmount = v),
   "edge-amount": (v) => (options().reaction.edgeAmount = v),
   "shade-amount": (v) => (options().shade.amount = v),
+  "mix-spin": (v) => (state.mix.turns = Math.round(v)),
 };
 const currentValues: Record<string, () => number> = {
   width: () => stroke().width,
@@ -446,6 +461,7 @@ const currentValues: Record<string, () => number> = {
   "displace-amount": () => options().reaction.displaceAmount,
   "edge-amount": () => options().reaction.edgeAmount,
   "shade-amount": () => options().shade.amount,
+  "mix-spin": () => state.mix.turns,
 };
 for (const [id, apply] of Object.entries({
   reaction: (on: boolean) => (options().reaction.on = on),
@@ -453,6 +469,11 @@ for (const [id, apply] of Object.entries({
 }))
   $<HTMLInputElement>(id).onchange = () =>
     edit(() => apply($<HTMLInputElement>(id).checked));
+$("mix-mode").onchange = () =>
+  edit(
+    () =>
+      (state.mix.mode = $<HTMLSelectElement>("mix-mode").value as MixMode),
+  );
 $("reaction-mode").onchange = () =>
   edit(
     () =>
