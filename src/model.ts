@@ -77,6 +77,7 @@ export const outputSize = (w: number, h: number, edge: number) => ({
 export class History {
   private past: DocumentState[] = [];
   private future: DocumentState[] = [];
+  private futureBeforePush: DocumentState[] = [];
   get canUndo() {
     return this.past.length > 0;
   }
@@ -86,14 +87,23 @@ export class History {
   push(state: DocumentState) {
     this.past.push(structuredClone(state));
     if (this.past.length > 80) this.past.shift();
+    this.futureBeforePush = this.future;
     this.future = [];
   }
+  discardLatestPush() {
+    const value = this.past.pop();
+    this.future = this.futureBeforePush;
+    this.futureBeforePush = [];
+    return value;
+  }
   undo(state: DocumentState) {
+    this.futureBeforePush = [];
     const value = this.past.pop();
     if (value) this.future.push(structuredClone(state));
     return value ?? state;
   }
   redo(state: DocumentState) {
+    this.futureBeforePush = [];
     const value = this.future.pop();
     if (value) this.past.push(structuredClone(state));
     return value ?? state;
@@ -101,6 +111,7 @@ export class History {
   clear() {
     this.past = [];
     this.future = [];
+    this.futureBeforePush = [];
   }
 }
 

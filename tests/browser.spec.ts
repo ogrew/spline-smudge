@@ -710,22 +710,20 @@ test("integer base width, point factor reset, and Shift wheel angle editing", as
   await page.locator("#mode-a").click();
   await ready(page);
   const a = (await debug(page)).strokes[0].source.angle;
-  await page
-    .locator("#stage")
-    .evaluate(
-      (stage, p) =>
-        stage.dispatchEvent(
-          new WheelEvent("wheel", {
-            clientX: p.x,
-            clientY: p.y,
-            deltaY: -120,
-            shiftKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        ),
-      position,
-    );
+  await page.locator("#stage").evaluate(
+    (stage, p) =>
+      stage.dispatchEvent(
+        new WheelEvent("wheel", {
+          clientX: p.x,
+          clientY: p.y,
+          deltaY: -120,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    position,
+  );
   await ready(page);
   expect((await debug(page)).strokes[0].source.angle).toBe(
     ((((a + 10 + 180) % 360) + 360) % 360) - 180,
@@ -733,26 +731,96 @@ test("integer base width, point factor reset, and Shift wheel angle editing", as
   await page.locator("#stroke-add").click();
   await ready(page);
   await expect(page.locator("#factor-reset")).toBeDisabled();
-  await page
-    .locator("#stage")
-    .evaluate(
-      (stage, p) =>
-        stage.dispatchEvent(
-          new WheelEvent("wheel", {
-            clientX: p.x,
-            clientY: p.y,
-            deltaY: -120,
-            shiftKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        ),
-      position,
-    );
+  await page.locator("#stage").evaluate(
+    (stage, p) =>
+      stage.dispatchEvent(
+        new WheelEvent("wheel", {
+          clientX: p.x,
+          clientY: p.y,
+          deltaY: -120,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    position,
+  );
   expect(await page.locator("#zoom-label").textContent()).toBe(zoom);
   await page.mouse.move(position.x, position.y);
   await page.mouse.wheel(0, 120);
   await expect
     .poll(() => page.locator("#zoom-label").textContent())
     .not.toBe(zoom);
+});
+
+test("no-op editing, blank double click history, point drag and cursor zoom", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await expect(page.locator("#undo")).toBeDisabled();
+
+  const initial = (await debug(page)).strokes[0].points;
+  const art = await page.locator("#art").boundingBox();
+  if (!art) throw new Error("No image");
+  const screen = (p: { x: number; y: number }) => ({
+    x: art.x + (p.x / 1600) * art.width,
+    y: art.y + (p.y / 1100) * art.height,
+  });
+
+  // Selecting an existing point and touching an unchanged slider add no history.
+  const selectedPosition = screen(initial[0]);
+  await page.mouse.click(selectedPosition.x, selectedPosition.y);
+  await expect(page.locator("#undo")).toBeDisabled();
+  await page.locator("#width").evaluate((input: HTMLInputElement) => {
+    input.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await expect(page.locator("#undo")).toBeDisabled();
+
+  // Find empty image space, then verify a double click leaves no point or history.
+  const empty = await page.evaluate(() => {
+    const points = (window as any).smudgeDebug.state.strokes[0].points;
+    for (let y = 100; y < 1100; y += 100)
+      for (let x = 100; x < 1600; x += 100)
+        if (points.every((p: any) => Math.hypot(p.x - x, p.y - y) > 100))
+          return { x, y };
+    throw new Error("No empty position");
+  });
+  const emptyPosition = screen(empty);
+  await page.mouse.dblclick(emptyPosition.x, emptyPosition.y, { delay: 50 });
+  expect((await debug(page)).strokes[0].points).toEqual(initial);
+  await expect(page.locator("#undo")).toBeDisabled();
+
+  // The first real pointer movement creates one undoable edit.
+  await page.mouse.move(selectedPosition.x, selectedPosition.y);
+  await page.mouse.down();
+  await page.mouse.move(selectedPosition.x + 24, selectedPosition.y + 18);
+  await page.mouse.up();
+  await ready(page);
+  expect((await debug(page)).strokes[0].points[0]).not.toEqual(initial[0]);
+  await expect(page.locator("#undo")).toBeEnabled();
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].points).toEqual(initial);
+  await expect(page.locator("#undo")).toBeDisabled();
+
+  // Wheel zoom keeps the image coordinate under the cursor fixed on screen.
+  const before = await page.locator("#art").boundingBox();
+  if (!before) throw new Error("No image before zoom");
+  const cursor = {
+    x: before.x + before.width * 0.31,
+    y: before.y + before.height * 0.67,
+  };
+  const beforeRelative = {
+    x: (cursor.x - before.x) / before.width,
+    y: (cursor.y - before.y) / before.height,
+  };
+  await page.mouse.move(cursor.x, cursor.y);
+  await page.mouse.wheel(0, -240);
+  const after = await page.locator("#art").boundingBox();
+  if (!after) throw new Error("No image after zoom");
+  expect((cursor.x - after.x) / after.width).toBeCloseTo(beforeRelative.x, 3);
+  expect((cursor.y - after.y) / after.height).toBeCloseTo(beforeRelative.y, 3);
 });

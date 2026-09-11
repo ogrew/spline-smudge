@@ -66,3 +66,19 @@ test("export name uses the global spline type, independent of selection or visib
   s.visible = false;
   assert.equal(exportKind(state), "natural");
 });
+test("discarding a canceled edit removes its undo entry and preserves redo", () => {
+  let state = initialState(200, 100);
+  const history = new History();
+  history.push(state);
+  state.background = "#000000";
+  state = history.undo(state);
+  assert.equal(history.canUndo, false);
+  assert.equal(history.canRedo, true);
+
+  history.push(state);
+  state = history.discardLatestPush() ?? state;
+  assert.equal(history.canUndo, false);
+  assert.equal(history.canRedo, true);
+  assert.equal(state.background, "#f3f0e8");
+  assert.equal(history.redo(state).background, "#000000");
+});
