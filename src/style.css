@@ -214,6 +214,27 @@ input[type="checkbox"] {
   margin: 0 5px 0 0;
   vertical-align: middle;
 }
+.option-toggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  margin: 18px 0 2px;
+  cursor: pointer;
+}
+.option-toggle:first-of-type {
+  margin-top: 0;
+}
+.option-settings {
+  margin-left: 18px;
+}
+.option-settings select {
+  margin-top: 10px;
+}
+input[type="range"]:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 .selected {
   border-left: 2px solid #acb885;
   background: #2a3030;

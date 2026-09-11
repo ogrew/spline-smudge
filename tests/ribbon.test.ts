@@ -22,14 +22,14 @@ test("B source coordinates belong to clicked B-spline points, not the curve", ()
   assert.ok(samples.every((p) => Math.hypot(p.x - 200, p.y - 350) > 10));
   let found = false;
   for (let i = 0; i < mesh.length; i += ribbonStride) {
-    if (Math.abs(mesh[i + 5] - 350) < 1e-4) {
+    if (Math.abs(mesh[i + 7] - 350) < 1e-4) {
       found = true;
       assert.ok(
-        Math.abs(mesh[i + 4] - 185) < 1e-4 ||
-          Math.abs(mesh[i + 4] - 215) < 1e-4,
+        Math.abs(mesh[i + 6] - 185) < 1e-4 ||
+          Math.abs(mesh[i + 6] - 215) < 1e-4,
       );
     }
-    assert.ok(mesh[i + 7] >= 0 && mesh[i + 7] <= 1);
+    assert.ok(mesh[i + 9] >= 0 && mesh[i + 9] <= 1);
   }
   assert.ok(found);
 });
@@ -44,6 +44,23 @@ test("A ignores per-point source changes", () => {
   s.points[1].source = { angle: 40, length: 90 };
   assert.deepEqual(ribbonMesh(samples, s, "A"), before);
 });
+test("vertex carries curve center, unit normal and signed half-width offset", () => {
+  const s = activeStroke(initialState(200, 100));
+  s.width = 30;
+  s.points = [
+    { id: "a", x: 20, y: 50, factor: 1 },
+    { id: "b", x: 180, y: 50, factor: 1 },
+  ];
+  const mesh = ribbonMesh(sampleCurve(s), s, "A");
+  for (let i = 0; i < mesh.length; i += ribbonStride) {
+    assert.ok(Math.abs(Math.hypot(mesh[i + 2], mesh[i + 3]) - 1) < 1e-5);
+    const edge = mesh[i + 8];
+    assert.ok(edge === 0 || edge === 1);
+    // Horizontal line, factor 1: offset is ± half the base width.
+    assert.ok(Math.abs(Math.abs(mesh[i + 10]) - 15) < 1e-5);
+    assert.equal(Math.sign(mesh[i + 10]), Math.sign(edge - 0.5));
+  }
+});
 test("B mesh splits color intervals and is finite at zero widths and coincident points", () => {
   const s = activeStroke(initialState(200, 100));
   s.points = [
@@ -54,7 +71,7 @@ test("B mesh splits color intervals and is finite at zero widths and coincident 
   const mesh = ribbonMesh(sampleCurve(s, 37), s, "B");
   assert.ok([...mesh].every(Number.isFinite));
   assert.equal(mesh.byteLength, mesh.length * Float32Array.BYTES_PER_ELEMENT);
-  const weights = [...mesh].filter((_, i) => i % ribbonStride === 7);
+  const weights = [...mesh].filter((_, i) => i % ribbonStride === 9);
   assert.ok(weights.includes(0) && weights.includes(1));
   const duplicate = {
     ...s.points[1],
