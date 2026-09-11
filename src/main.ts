@@ -387,19 +387,27 @@ const changes: Record<string, (v: number) => void> = {
   continuity: (v) => (stroke().continuity = v),
   bias: (v) => (stroke().bias = v),
 };
+const currentValues: Record<string, () => number> = {
+  width: () => stroke().width,
+  factor: () => point()?.factor ?? 1,
+  angle: () => currentSource().angle,
+  "source-length": () => currentSource().length,
+  tension: () => stroke().tension,
+  continuity: () => stroke().continuity,
+  bias: () => stroke().bias,
+};
 for (const [id, change] of Object.entries(changes)) {
   const input = $<HTMLInputElement>(id);
   let checkpoint = false;
-  input.addEventListener("pointerdown", () => {
-    history.push(state);
-    checkpoint = true;
-  });
   input.addEventListener("input", () => {
+    const beforeValue = currentValues[id](),
+      before = checkpoint ? null : structuredClone(state);
+    change(Number(input.value));
+    if (currentValues[id]() === beforeValue) return;
     if (!checkpoint) {
-      history.push(state);
+      history.push(before!);
       checkpoint = true;
     }
-    change(Number(input.value));
     requestRender();
   });
   input.addEventListener("change", () => {
@@ -498,9 +506,34 @@ $("one").onclick = () => {
   fitted = false;
   layout();
 };
-function zoomBy(factor: number) {
+function zoomBy(factor: number, anchor?: { clientX: number; clientY: number }) {
+  const stageRect = $("stage").getBoundingClientRect();
+  const artRect = $("art").getBoundingClientRect();
+  const relative = anchor
+    ? {
+        x: (anchor.clientX - artRect.left) / artRect.width,
+        y: (anchor.clientY - artRect.top) / artRect.height,
+      }
+    : null;
   fitted = false;
   zoom = Math.max(0.02, Math.min(8, zoom * factor));
+  if (anchor && relative) {
+    const s = size(),
+      width = s.width * zoom,
+      height = s.height * zoom;
+    pan = {
+      x:
+        anchor.clientX -
+        stageRect.left -
+        relative.x * width -
+        (stageRect.width - width) / 2,
+      y:
+        anchor.clientY -
+        stageRect.top -
+        relative.y * height -
+        (stageRect.height - height) / 2,
+    };
+  }
   layout();
 }
 $("plus").onclick = () => zoomBy(1.25);
@@ -567,7 +600,7 @@ $("stage").addEventListener(
     }
     angleWheel.checkpoint = false;
     angleWheel.revision = -1;
-    zoomBy(Math.exp(-event.deltaY * 0.001));
+    zoomBy(Math.exp(-event.deltaY * 0.001), event);
   },
   { passive: false },
 );
@@ -587,9 +620,15 @@ const nearest = (p: { x: number; y: number }) =>
 let drag: null | {
   type: "point" | "pan";
   id?: string;
+  checkpoint?: boolean;
   start: { x: number; y: number };
   pan: { x: number; y: number };
 } = null;
+let clickAddedPoint: {
+  id: string;
+  time: number;
+  previousSelection: string | null;
+} | null = null;
 $("stage").addEventListener("pointerdown", (event) => {
   if (exporting || (event.button !== 0 && event.button !== 1)) return;
   $("stage").focus();
@@ -605,10 +644,16 @@ $("stage").addEventListener("pointerdown", (event) => {
     if (existing) {
       selected = existing.id;
       if (event.detail === 2) return;
-      history.push(state);
-      drag = { type: "point", id: existing.id, start: p, pan };
+      drag = {
+        type: "point",
+        id: existing.id,
+        start: p,
+        pan,
+        checkpoint: false,
+      };
       sync();
     } else if (inside(p) && event.detail < 2) {
+      const previousSelection = selected;
       history.push(state);
       const added = {
         ...p,
@@ -620,6 +665,11 @@ $("stage").addEventListener("pointerdown", (event) => {
         },
       };
       stroke().points.push(added);
+      clickAddedPoint = {
+        id: added.id,
+        time: performance.now(),
+        previousSelection,
+      };
       selected = added.id;
       if (stroke().points.length === 1) {
         stroke().source.x = p.x;
@@ -646,7 +696,11 @@ $("stage").addEventListener("pointermove", (event) => {
   p.y = Math.max(0, Math.min(ih, p.y));
   if (drag.type === "point") {
     const q = stroke().points.find((q) => q.id === drag!.id);
-    if (q) {
+    if (q && (q.x !== p.x || q.y !== p.y)) {
+      if (!drag.checkpoint) {
+        history.push(state);
+        drag.checkpoint = true;
+      }
       q.x = p.x;
       q.y = p.y;
     }
@@ -659,8 +713,14 @@ for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
   });
 $("stage").addEventListener("dblclick", (event) => {
   if (exporting || !stroke().visible) return;
-  const p = nearest(coordinate(event));
-  if (p)
+  const p = nearest(coordinate(event)),
+    added = clickAddedPoint;
+  if (p && added && p.id === added.id && performance.now() - added.time < 750) {
+    state = history.discardLatestPush() ?? state;
+    selected = added.previousSelection;
+    clickAddedPoint = null;
+    requestRender();
+  } else if (p)
     edit(() => {
       stroke().points = stroke().points.filter((q) => q.id !== p.id);
       selected = null;
