@@ -98,18 +98,15 @@ npm run test:browser
 ## GitHub管理とサイト公開
 
 管理先は [ogrew/spline-smudge](https://github.com/ogrew/spline-smudge) です。
-公開予定URLは https://ogrew.github.io/spline-smudge/ です（Pagesの有効化が必要）。
+サイトURLは [Spline Smudge](https://ogrew.github.io/spline-smudge/) です。2026-09-11に所有者の承認を受けてリポジトリを公開に変更し、GitHub Pagesを有効化しました。
 
 `.github/workflows/pages.yml` が、mainへのpush時に依存関係のインストール、テスト、公開用ビルド、Pagesへの配信を行います。配信対象は `dist` のみです。公開用ビルドは `npm run build -- --base=/spline-smudge/` を使い、ローカル開発URLは変えません。
 
-### 初回公開
+### 公開の設定と更新
 
-2026-09-11時点では、GitHub APIから「現在のプランではこのリポジトリのPagesを利用できない」と返されており、まだ公開していません。
-
-1. 非公開リポジトリを維持するなら、アカウント所有者がGitHub Proに変更します。無料で公開するなら、ソース・計画書・Git履歴も公開されることを了承した上でリポジトリを公開に変更します。現在は非公開の指定を維持しています。
-2. [Settings → Pages](https://github.com/ogrew/spline-smudge/settings/pages) のSourceを **GitHub Actions** にします。
-3. [Actions](https://github.com/ogrew/spline-smudge/actions) で **Deploy GitHub Pages → Run workflow → main** を実行します。
-4. 実行成功後、公開URLで初期描画、画像選択、A/B切替、PNGエクスポートを確認します。
+1. [Settings → Pages](https://github.com/ogrew/spline-smudge/settings/pages) のSourceは **GitHub Actions** に設定済みです。
+2. 通常はmainへpushするだけで自動配信します。手動で再配信する場合は [Actions](https://github.com/ogrew/spline-smudge/actions) で **Deploy GitHub Pages → Run workflow → main** を実行します。
+3. 実行成功後、公開URLで初期描画、画像選択、A/B切替、PNGエクスポートを確認します。
 
 初回設定を済ませれば、以後mainへのpushで自動更新されます。失敗した場合はActionsの実行ログを確認します。既に公開済みのサイトは、新しいデプロイが成功するまで従来の内容を維持します。戻す場合は対象の変更を `git revert` してmainにpushします。
 
