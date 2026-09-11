@@ -18,7 +18,6 @@ export type Stroke = {
   name: string;
   visible: boolean;
   points: Point[];
-  kind: Kind;
   width: number;
   tension: number;
   continuity: number;
@@ -28,6 +27,7 @@ export type Stroke = {
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.
 export type DocumentState = {
   mode: "A" | "B";
+  kind: Kind;
   strokes: Stroke[];
   activeId: string;
   nextStrokeNumber: number;
@@ -37,6 +37,7 @@ export type DocumentState = {
 export function initialState(width: number, height: number): DocumentState {
   return {
     mode: "A",
+    kind: "centripetal",
     activeId: "stroke-1",
     nextStrokeNumber: 2,
     background: "#f3f0e8",
@@ -47,7 +48,6 @@ export function initialState(width: number, height: number): DocumentState {
         name: "Stroke 01",
         visible: true,
         points: [],
-        kind: "centripetal",
         width: Math.round(Math.min(width, height) * 0.13),
         tension: 0,
         continuity: 0,
@@ -142,13 +142,5 @@ export function moveStroke(state: DocumentState, direction: -1 | 1) {
   ];
 }
 export function exportKind(state: DocumentState) {
-  return (
-    [
-      ...new Set(
-        state.strokes
-          .filter((s) => s.visible && s.points.length > 1)
-          .map((s) => s.kind),
-      ),
-    ].join("-") || "image"
-  );
+  return state.kind;
 }

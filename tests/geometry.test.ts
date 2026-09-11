@@ -7,6 +7,7 @@ import {
   History,
   outputSize,
   kinds,
+  type Kind,
 } from "../src/model.ts";
 function fixture() {
   const s = activeStroke(initialState(800, 600));
@@ -17,19 +18,19 @@ function fixture() {
     { x: 560, y: 450 },
     { x: 760, y: 60 },
   ].map((p, i) => ({ ...p, id: String(i), factor: 1 }));
-  return s;
+  return { ...s, kind: "centripetal" as Kind };
 }
 for (const kind of Object.keys(kinds))
   test(`${kind}: finite endpoints, bounded width, width-independent shape`, () => {
     const s = fixture();
     s.kind = kind as typeof s.kind;
-    const before = sampleCurve(s);
+    const before = sampleCurve(s, 2, s.kind);
     assert.ok(before.length > 2);
     assert.ok(Math.hypot(before[0].x - 30, before[0].y - 30) < 1e-5);
     assert.ok(Math.hypot(before.at(-1)!.x - 760, before.at(-1)!.y - 60) < 1e-5);
     s.points[2].factor = 10;
     s.points[0].factor = 0;
-    const after = sampleCurve(s);
+    const after = sampleCurve(s, 2, s.kind);
     assert.equal(after.length, before.length);
     after.forEach((p, i) => {
       assert.ok(Object.values(p).every(Number.isFinite));
@@ -43,9 +44,9 @@ for (const kind of Object.keys(kinds))
 test("zero TCB matches uniform Catmull–Rom", () => {
   const s = fixture();
   s.kind = "catmull";
-  const a = sampleCurve(s);
+  const a = sampleCurve(s, 2, s.kind);
   s.kind = "tcb";
-  const b = sampleCurve(s);
+  const b = sampleCurve(s, 2, s.kind);
   assert.deepEqual(a, b);
 });
 test("coincident points and all-zero widths remain finite", () => {
@@ -54,12 +55,12 @@ test("coincident points and all-zero widths remain finite", () => {
     s.kind = kind as typeof s.kind;
     s.points.splice(2, 0, { ...s.points[1], id: "duplicate" });
     s.points.forEach((p) => (p.factor = 0));
-    for (const p of sampleCurve(s)) {
+    for (const p of sampleCurve(s, 2, s.kind)) {
       assert.equal(p.factor, 0);
       assert.ok(Number.isFinite(p.x));
     }
     s.points = s.points.map((p) => ({ ...p, x: 1, y: 1 }));
-    assert.deepEqual(sampleCurve(s), []);
+    assert.deepEqual(sampleCurve(s, 2, s.kind), []);
   }
 });
 test("smooth width never overshoots, at exact endpoints", () => {

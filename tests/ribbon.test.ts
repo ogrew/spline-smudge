@@ -6,7 +6,6 @@ import { ribbonMesh, ribbonStride } from "../src/ribbon-mesh.ts";
 
 test("B source coordinates belong to clicked B-spline points, not the curve", () => {
   const s = activeStroke(initialState(600, 400));
-  s.kind = "bspline";
   s.points = [
     { x: 20, y: 40 },
     { x: 200, y: 350 },
@@ -18,7 +17,7 @@ test("B source coordinates belong to clicked B-spline points, not the curve", ()
     factor: 1,
     source: { angle: 0, length: 20 + i * 10 },
   }));
-  const samples = sampleCurve(s),
+  const samples = sampleCurve(s, 2, "bspline"),
     mesh = ribbonMesh(samples, s, "B");
   assert.ok(samples.every((p) => Math.hypot(p.x - 200, p.y - 350) > 10));
   let found = false;

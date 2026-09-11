@@ -77,7 +77,7 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   for (const kind of ["catmull", "bspline", "centripetal", "natural", "tcb"]) {
     await page.locator("#kind").selectOption(kind);
     await ready(page);
-    expect((await debug(page)).strokes[0].kind).toBe(kind);
+    expect((await debug(page)).kind).toBe(kind);
     expect(
       await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
     ).toBe(0);
@@ -468,7 +468,7 @@ test("multiple stroke selection, duplication, visibility, ordering and history",
   expect(edited.points[0].source.angle).toBe(30);
   await page.locator(`[data-select-stroke="${initial.id}"]`).click();
   expect((await debug(page)).strokes[0]).toEqual(initial);
-  expect(await page.locator("#kind").inputValue()).toBe(initial.kind);
+  expect(await page.locator("#kind").inputValue()).toBe("natural");
   expect(await page.locator(".point").count()).toBe(initial.points.length);
   await page.locator("#stroke-up").click();
   await ready(page);
@@ -520,7 +520,7 @@ test("multiple stroke selection, duplication, visibility, ordering and history",
   await ready(page);
   const output = await download(page, "spline-smudge-multiple");
   expect([output.width, output.height]).toEqual([5000, 3438]);
-  expect(output.filename).toMatch(/^centripetal-natural_B_/);
+  expect(output.filename).toMatch(/^natural_B_/);
   await page.screenshot({ path: "/private/tmp/spline-smudge-multiple-ui.png" });
   await page.locator("#stroke-delete").click();
   await ready(page);

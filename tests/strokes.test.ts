@@ -51,7 +51,7 @@ test("undo restores ordering, visibility and removed strokes; last deletion leav
   assert.equal(activeStroke(state).points.length, 0);
   assert.equal(activeStroke(state).visible, true);
 });
-test("export name contains visible spline types, independent of selection", () => {
+test("export name uses the global spline type, independent of selection or visibility", () => {
   const state = initialState(200, 100),
     s = activeStroke(state);
   s.points = [
@@ -59,10 +59,10 @@ test("export name contains visible spline types, independent of selection", () =
     { id: "b", x: 30, y: 30, factor: 1 },
   ];
   const copy = addStroke(state, true);
-  copy.kind = "natural";
-  assert.equal(exportKind(state), "centripetal-natural");
+  state.kind = "natural";
+  assert.equal(exportKind(state), "natural");
   copy.visible = false;
-  assert.equal(exportKind(state), "centripetal");
+  assert.equal(exportKind(state), "natural");
   s.visible = false;
-  assert.equal(exportKind(state), "image");
+  assert.equal(exportKind(state), "natural");
 });

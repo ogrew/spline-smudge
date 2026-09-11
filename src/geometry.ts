@@ -1,4 +1,4 @@
-import type { Vec, Point, Stroke } from "./model.ts";
+import type { Vec, Point, Stroke, Kind } from "./model.ts";
 export type Sample = Vec & {
   factor: number;
   station: number;
@@ -42,13 +42,17 @@ export function curvePoints(points: Point[]): Point[] {
   }
   return ps;
 }
-export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
+export function sampleCurve(
+  stroke: Stroke,
+  step = 2,
+  kind: Kind = "centripetal",
+): Sample[] {
   const ps = curvePoints(stroke.points);
   if (ps.length < 2) return [];
   const count = ps.length,
     last = count - 1;
   let raw: (Vec & { factor: number; station: number })[] = [];
-  if (stroke.kind === "bspline") {
+  if (kind === "bspline") {
     const degree = Math.min(3, last),
       spans = count - degree;
     const knots = [
@@ -108,8 +112,8 @@ export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
         out[i] = (rhs[i] - upper[i] * out[i + 1]) / diag[i];
       return out;
     };
-    const mx = stroke.kind === "natural" ? second("x") : [],
-      my = stroke.kind === "natural" ? second("y") : [];
+    const mx = kind === "natural" ? second("x") : [],
+      my = kind === "natural" ? second("y") : [];
     const tangent = (i: number, outgoing: boolean) => {
       const p = ps[i],
         a = ps[i - 1] ?? reflect(p, ps[i + 1]),
@@ -131,7 +135,7 @@ export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
         b = ps[i + 2] ?? reflect(q, p);
       let m = add(q, a, 0.5, -0.5),
         n = add(b, p, 0.5, -0.5);
-      if (stroke.kind === "centripetal") {
+      if (kind === "centripetal") {
         const h0 = Math.sqrt(dist(a, p)),
           h1 = Math.sqrt(dist(p, q)),
           h2 = Math.sqrt(dist(q, b));
@@ -147,7 +151,7 @@ export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
           h1,
           h1 / h2,
         );
-      } else if (stroke.kind === "tcb") {
+      } else if (kind === "tcb") {
         m = tangent(i, true);
         n = tangent(i + 1, false);
       }
@@ -159,7 +163,7 @@ export function sampleCurve(stroke: Stroke, step = 2): Sample[] {
         const t = j / divisions,
           u = 1 - t;
         let xy = hermite(p, q, m, n, t);
-        if (stroke.kind === "natural")
+        if (kind === "natural")
           xy = {
             x:
               u * p.x +

@@ -261,7 +261,7 @@ export class Renderer {
         },
       };
       // Sample in source-image distance so zoom does not change the mesh.
-      const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale));
+      const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale), state.kind);
       if (samples.length > 1) {
         const verts = ribbonMesh(samples, scaled, state.mode);
         g.bindVertexArray(this.vao);
