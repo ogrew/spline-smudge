@@ -48,7 +48,13 @@ export function initialState(width: number, height: number): DocumentState {
         name: "Stroke 01",
         visible: true,
         points: [],
-        width: Math.round(Math.min(width, height) * 0.13),
+        width: Math.max(
+          0.01,
+          Math.min(
+            Math.round(Math.min(width, height) * 0.13),
+            Math.max(width, height) / 100,
+          ),
+        ),
         tension: 0,
         continuity: 0,
         bias: 0,

@@ -45,6 +45,8 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   });
   await page.goto("/");
   await ready(page);
+  await expect(page.locator("#width")).toHaveAttribute("max", "16");
+  expect((await debug(page)).strokes[0].width).toBeLessThanOrEqual(16);
   for (const value of [0, 0.5, 0.999999]) {
     await page.evaluate((v) => {
       const random = Math.random;
