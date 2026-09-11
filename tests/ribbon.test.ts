@@ -53,6 +53,7 @@ test("B mesh splits color intervals and is finite at zero widths and coincident 
   ];
   const mesh = ribbonMesh(sampleCurve(s, 37), s, "B");
   assert.ok([...mesh].every(Number.isFinite));
+  assert.equal(mesh.byteLength, mesh.length * Float32Array.BYTES_PER_ELEMENT);
   const weights = [...mesh].filter((_, i) => i % ribbonStride === 7);
   assert.ok(weights.includes(0) && weights.includes(1));
   const duplicate = {
