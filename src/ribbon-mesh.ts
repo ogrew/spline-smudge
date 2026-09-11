@@ -27,9 +27,17 @@ export function ribbonMesh(
   stroke: Stroke,
   mode: DocumentState["mode"],
 ): Float32Array {
-  const vertices: number[] = [],
-    points = curvePoints(stroke.points);
-  if (points.length < 2) return new Float32Array();
+  const points = curvePoints(stroke.points);
+  if (points.length < 2 || samples.length < 2) return new Float32Array();
+  let quadCount = samples.length - 1;
+  if (mode === "B")
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1],
+        b = samples[i];
+      for (let k = Math.floor(a.station) + 1; k < b.station; k++) quadCount++;
+    }
+  const vertices = new Float32Array(quadCount * 6 * ribbonStride);
+  let offset = 0;
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1],
       b = samples[i];
@@ -65,18 +73,17 @@ export function ribbonMesh(
         const r = (cross - 0.5) * stroke.width * p.factor,
           uvA = sourceUV(first, cross),
           uvB = sourceUV(second, cross);
-        vertices.push(
-          p.x + p.nx * r,
-          p.y + p.ny * r,
-          uvA.x,
-          uvA.y,
-          uvB.x,
-          uvB.y,
-          cross,
-          mode === "A" ? 0 : Math.max(0, Math.min(1, p.station - index)),
-        );
+        vertices[offset++] = p.x + p.nx * r;
+        vertices[offset++] = p.y + p.ny * r;
+        vertices[offset++] = uvA.x;
+        vertices[offset++] = uvA.y;
+        vertices[offset++] = uvB.x;
+        vertices[offset++] = uvB.y;
+        vertices[offset++] = cross;
+        vertices[offset++] =
+          mode === "A" ? 0 : Math.max(0, Math.min(1, p.station - index));
       }
     }
   }
-  return new Float32Array(vertices);
+  return vertices;
 }

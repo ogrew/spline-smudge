@@ -9,6 +9,7 @@ type Target = {
   fbo: WebGLFramebuffer;
   width: number;
   height: number;
+  mipmapped: boolean;
 };
 type Program = {
   program: WebGLProgram;
@@ -126,15 +127,20 @@ export class Renderer {
     g.bindTexture(g.TEXTURE_2D, t);
     g.uniform1i(this.location(p, key), unit);
   }
-  private target(w: number, h: number): Target {
+  private target(w: number, h: number, mipmapped = false): Target {
     const g = this.gl;
     // WebGL errors are sticky. Only errors raised by this allocation should decide its result.
     while (g.getError() !== g.NO_ERROR) {}
     const texture = g.createTexture()!,
       fbo = g.createFramebuffer()!;
     g.bindTexture(g.TEXTURE_2D, texture);
-    g.texStorage2D(g.TEXTURE_2D, 1, g.RGBA8, w, h);
-    g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MIN_FILTER, g.LINEAR);
+    const levels = mipmapped ? Math.floor(Math.log2(Math.max(w, h))) + 1 : 1;
+    g.texStorage2D(g.TEXTURE_2D, levels, g.RGBA8, w, h);
+    g.texParameteri(
+      g.TEXTURE_2D,
+      g.TEXTURE_MIN_FILTER,
+      mipmapped ? g.LINEAR_MIPMAP_LINEAR : g.LINEAR,
+    );
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_T, g.CLAMP_TO_EDGE);
@@ -156,7 +162,7 @@ export class Renderer {
         "この解像度の画像領域を確保できません。出力解像度を下げて再計算してください。",
       );
     }
-    return { texture, fbo, width: w, height: h };
+    return { texture, fbo, width: w, height: h, mipmapped };
   }
   private drop(t?: Target) {
     if (t) {
@@ -216,8 +222,9 @@ export class Renderer {
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(source, 0, 0, w, h);
     this.photo = this.target(w, h);
-    this.working = this.target(w, h);
-    this.complete = this.target(w, h);
+    // Both result targets alternate between working and complete roles.
+    this.working = this.target(w, h, true);
+    this.complete = this.target(w, h, true);
     const g = this.gl;
     g.bindTexture(g.TEXTURE_2D, this.photo.texture);
     // All offscreen targets use logical top at texture v=0. Only presentation flips Y.
@@ -278,6 +285,8 @@ export class Renderer {
       }
     }
     if (cancelled() || g.isContextLost()) return false;
+    g.bindTexture(g.TEXTURE_2D, this.working!.texture);
+    g.generateMipmap(g.TEXTURE_2D);
     // Wait for GPU completion without blocking the UI; cancelled jobs never replace the completed image.
     const fence = g.fenceSync(g.SYNC_GPU_COMMANDS_COMPLETE, 0)!;
     g.flush();

@@ -849,9 +849,11 @@ test("renderer clears stale errors and reuses ribbon GPU state", async ({
 
     let allocations = 0,
       uploads = 0,
-      setups = 0;
+      setups = 0,
+      mipmaps = 0;
     const bufferData = gl.bufferData.bind(gl),
       bufferSubData = gl.bufferSubData.bind(gl),
+      generateMipmap = gl.generateMipmap.bind(gl),
       ribbonSetup = (renderer as any).ribbonSetup.bind(renderer);
     gl.bufferData = (...args: any[]) => {
       if (args[0] === gl.ARRAY_BUFFER) allocations++;
@@ -860,6 +862,10 @@ test("renderer clears stale errors and reuses ribbon GPU state", async ({
     gl.bufferSubData = (...args: any[]) => {
       if (args[0] === gl.ARRAY_BUFFER) uploads++;
       return bufferSubData(...args);
+    };
+    gl.generateMipmap = (...args: any[]) => {
+      if (args[0] === gl.TEXTURE_2D) mipmaps++;
+      return generateMipmap(...args);
     };
     (renderer as any).ribbonSetup = (...args: any[]) => {
       setups++;
@@ -888,9 +894,21 @@ test("renderer clears stale errors and reuses ribbon GPU state", async ({
         () => false,
         () => {},
       );
-    const finalError = gl.getError();
+    gl.bindTexture(gl.TEXTURE_2D, (renderer as any).complete.texture);
+    const usesMipmapFilter =
+        gl.getTexParameter(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER) ===
+        gl.LINEAR_MIPMAP_LINEAR,
+      finalError = gl.getError();
     gl.getExtension("WEBGL_lose_context")?.loseContext();
-    return { allocationError, finalError, allocations, uploads, setups };
+    return {
+      allocationError,
+      finalError,
+      allocations,
+      uploads,
+      setups,
+      mipmaps,
+      usesMipmapFilter,
+    };
   });
   expect(result).toEqual({
     allocationError: 0,
@@ -898,5 +916,7 @@ test("renderer clears stale errors and reuses ribbon GPU state", async ({
     allocations: 1,
     uploads: 4,
     setups: 2,
+    mipmaps: 2,
+    usesMipmapFilter: true,
   });
 });
