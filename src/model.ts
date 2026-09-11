@@ -24,6 +24,33 @@ export type Stroke = {
   bias: number;
   source: Vec & { angle: number; length: number };
 };
+export type ReactionMode = "displace" | "edgeWidth";
+export const reactionModes: Record<ReactionMode, string> = {
+  displace: "輝度ディスプレイスメント",
+  edgeWidth: "エッジで幅を変調",
+};
+/** Photo-reactive options. Whole-document, undoable, part of the render snapshot. */
+export type Options = {
+  /** Deform the ribbon from the photo with one selectable algorithm:
+   * displace along the normal by luminance, or scale the width by edge strength.
+   * Each algorithm keeps its own amount so switching modes preserves both. */
+  reaction: {
+    on: boolean;
+    mode: ReactionMode;
+    /** Displacement as % of the source short edge; negative flips direction. */
+    displaceAmount: number;
+    /** Width modulation −1..1; negative thins at edges. */
+    edgeAmount: number;
+  };
+  /** Fake 3D: cylinder-profile shading across the ribbon cross-section, 0..1. */
+  shade: { on: boolean; amount: number };
+};
+export function defaultOptions(): Options {
+  return {
+    reaction: { on: false, mode: "displace", displaceAmount: 6, edgeAmount: 0.6 },
+    shade: { on: false, amount: 0.65 },
+  };
+}
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.
 export type DocumentState = {
   mode: "A" | "B";
@@ -33,6 +60,7 @@ export type DocumentState = {
   nextStrokeNumber: number;
   background: string;
   longEdge: number;
+  options: Options;
 };
 export function initialState(width: number, height: number): DocumentState {
   return {
@@ -42,6 +70,7 @@ export function initialState(width: number, height: number): DocumentState {
     nextStrokeNumber: 2,
     background: "#f3f0e8",
     longEdge: 2000,
+    options: defaultOptions(),
     strokes: [
       {
         id: "stroke-1",

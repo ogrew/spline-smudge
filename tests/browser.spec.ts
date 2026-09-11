@@ -920,3 +920,53 @@ test("renderer clears stale errors and reuses ribbon GPU state", async ({
     usesMipmapFilter: true,
   });
 });
+
+test("photo options change the output, reveal settings only while on, and off matches baseline", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await expect(page.locator("#reaction-settings")).toBeHidden();
+  await expect(page.locator("#shade-settings")).toBeHidden();
+  const baseline = await download(page, "spline-smudge-options-baseline");
+  // Reaction: one toggle, two selectable algorithms with their own amounts.
+  await page.locator("#reaction").check();
+  await ready(page);
+  await expect(page.locator("#reaction-settings")).toBeVisible();
+  await expect(page.locator("#reaction-displace")).toBeVisible();
+  await expect(page.locator("#reaction-edge")).toBeHidden();
+  const displaced = await download(page, "spline-smudge-options-displace");
+  expect(displaced.bytes.equals(baseline.bytes)).toBe(false);
+  await page.locator("#reaction-mode").selectOption("edgeWidth");
+  await ready(page);
+  await expect(page.locator("#reaction-displace")).toBeHidden();
+  await expect(page.locator("#reaction-edge")).toBeVisible();
+  const edged = await download(page, "spline-smudge-options-edge");
+  expect(edged.bytes.equals(baseline.bytes)).toBe(false);
+  expect(edged.bytes.equals(displaced.bytes)).toBe(false);
+  await page.locator("#reaction").uncheck();
+  await ready(page);
+  await expect(page.locator("#reaction-settings")).toBeHidden();
+  // Fake 3D defaults to 0.65 when first enabled.
+  await page.locator("#shade").check();
+  await ready(page);
+  await expect(page.locator("#shade-settings")).toBeVisible();
+  expect(await page.locator("#shade-amount").inputValue()).toBe("0.65");
+  const shaded = await download(page, "spline-smudge-options-shade");
+  expect(shaded.bytes.equals(baseline.bytes)).toBe(false);
+  await page.locator("#shade").uncheck();
+  await ready(page);
+  // Everything off again restores the exact baseline pixels.
+  const restored = await download(page, "spline-smudge-options-restored");
+  expect(restored.bytes.equals(baseline.bytes)).toBe(true);
+  // Toggles participate in undo and redo.
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).options.shade.on).toBe(true);
+  await page.locator("#redo").click();
+  await ready(page);
+  expect((await debug(page)).options.shade.on).toBe(false);
+  expect(
+    await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
+  ).toBe(0);
+});

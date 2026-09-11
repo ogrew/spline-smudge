@@ -2,8 +2,11 @@ import type { DocumentState, Stroke, Vec } from "./model.ts";
 import { pointSource } from "./model.ts";
 import { curvePoints, type Sample } from "./geometry.ts";
 
-/** Layout per vertex: position.xy, sourceA.xy, sourceB.xy, cross-section, interval fraction. */
-export const ribbonStride = 8;
+/** Layout per vertex: center.xy, unit normal.xy, sourceA.xy, sourceB.xy,
+ * (cross-section, interval fraction), (signed half-width offset px, 0).
+ * The vertex shader assembles the final position so photo-reactive options
+ * (displacement, edge-modulated width) can move vertices without new meshes. */
+export const ribbonStride = 12;
 function sampleAt(a: Sample, b: Sample, station: number): Sample {
   const t = (station - a.station) / (b.station - a.station);
   const out = { ...a, station };
@@ -73,8 +76,10 @@ export function ribbonMesh(
         const r = (cross - 0.5) * stroke.width * p.factor,
           uvA = sourceUV(first, cross),
           uvB = sourceUV(second, cross);
-        vertices[offset++] = p.x + p.nx * r;
-        vertices[offset++] = p.y + p.ny * r;
+        vertices[offset++] = p.x;
+        vertices[offset++] = p.y;
+        vertices[offset++] = p.nx;
+        vertices[offset++] = p.ny;
         vertices[offset++] = uvA.x;
         vertices[offset++] = uvA.y;
         vertices[offset++] = uvB.x;
@@ -82,6 +87,8 @@ export function ribbonMesh(
         vertices[offset++] = cross;
         vertices[offset++] =
           mode === "A" ? 0 : Math.max(0, Math.min(1, p.station - index));
+        vertices[offset++] = r;
+        vertices[offset++] = 0;
       }
     }
   }
