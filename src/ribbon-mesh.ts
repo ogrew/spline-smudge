@@ -2,8 +2,12 @@ import type { DocumentState, Stroke, Vec } from "./model.ts";
 import { pointSource } from "./model.ts";
 import { curvePoints, type Sample } from "./geometry.ts";
 
-/** Layout per vertex: position.xy, sourceA.xy, sourceB.xy, cross-section, interval fraction. */
-export const ribbonStride = 8;
+/** Layout per vertex: center.xy, unit normal.xy, sourceA.xy, sourceB.xy,
+ * (local cross-section, interval fraction), (signed half-width offset px, 0).
+ * The vertex shader assembles the final position so experiments (displacement,
+ * edge-modulated width) can move vertices without rebuilding the mesh code. */
+export const ribbonStride = 12;
+export type StrandOptions = { count: number; wobble: number };
 function sampleAt(a: Sample, b: Sample, station: number): Sample {
   const t = (station - a.station) / (b.station - a.station);
   const out = { ...a, station };
@@ -26,9 +30,24 @@ export function ribbonMesh(
   samples: Sample[],
   stroke: Stroke,
   mode: DocumentState["mode"],
+  strands?: StrandOptions,
 ): Float32Array {
   const points = curvePoints(stroke.points);
   if (points.length < 2 || samples.length < 2) return new Float32Array();
+  const strandCount = strands ? Math.max(1, Math.round(strands.count)) : 1;
+  // Deterministic per-strand wobble so repeated renders stay byte-identical.
+  const bandHalf = strands ? 0.325 / strandCount : 0.5;
+  const wavelength = Math.max(8, stroke.width * 5);
+  const strandPhase = (k: number) => k * 2.3999632297,
+    strandWavelength = (k: number) => {
+      const hash = Math.sin(k * 12.9898) * 43758.5453;
+      return wavelength * (0.75 + 0.5 * (hash - Math.floor(hash)));
+    };
+  const wobbleAt = (k: number, distance: number) =>
+    strands && strands.wobble
+      ? (strands.wobble / strandCount) *
+        Math.sin((distance / strandWavelength(k)) * 2 * Math.PI + strandPhase(k))
+      : 0;
   let quadCount = samples.length - 1;
   if (mode === "B")
     for (let i = 1; i < samples.length; i++) {
@@ -36,7 +55,7 @@ export function ribbonMesh(
         b = samples[i];
       for (let k = Math.floor(a.station) + 1; k < b.station; k++) quadCount++;
     }
-  const vertices = new Float32Array(quadCount * 6 * ribbonStride);
+  const vertices = new Float32Array(quadCount * strandCount * 6 * ribbonStride);
   let offset = 0;
   for (let i = 1; i < samples.length; i++) {
     const a = samples[i - 1],
@@ -62,26 +81,40 @@ export function ribbonMesh(
         mode === "A" ? stroke.source : pointSource(stroke, points[index]);
       const second =
         mode === "A" ? stroke.source : pointSource(stroke, points[index + 1]);
-      for (const [p, cross] of [
-        [left, 0],
-        [left, 1],
-        [right, 0],
-        [right, 0],
-        [left, 1],
-        [right, 1],
-      ] as const) {
-        const r = (cross - 0.5) * stroke.width * p.factor,
-          uvA = sourceUV(first, cross),
-          uvB = sourceUV(second, cross);
-        vertices[offset++] = p.x + p.nx * r;
-        vertices[offset++] = p.y + p.ny * r;
-        vertices[offset++] = uvA.x;
-        vertices[offset++] = uvA.y;
-        vertices[offset++] = uvB.x;
-        vertices[offset++] = uvB.y;
-        vertices[offset++] = cross;
-        vertices[offset++] =
-          mode === "A" ? 0 : Math.max(0, Math.min(1, p.station - index));
+      for (let k = 0; k < strandCount; k++) {
+        const center = strandCount > 1 ? (k + 0.5) / strandCount : 0.5;
+        for (const [p, edge] of [
+          [left, 0],
+          [left, 1],
+          [right, 0],
+          [right, 0],
+          [left, 1],
+          [right, 1],
+        ] as const) {
+          const cross = Math.min(
+            1,
+            Math.max(
+              0,
+              center + wobbleAt(k, p.distance) + (edge - 0.5) * 2 * bandHalf,
+            ),
+          );
+          const r = (cross - 0.5) * stroke.width * p.factor,
+            uvA = sourceUV(first, cross),
+            uvB = sourceUV(second, cross);
+          vertices[offset++] = p.x;
+          vertices[offset++] = p.y;
+          vertices[offset++] = p.nx;
+          vertices[offset++] = p.ny;
+          vertices[offset++] = uvA.x;
+          vertices[offset++] = uvA.y;
+          vertices[offset++] = uvB.x;
+          vertices[offset++] = uvB.y;
+          vertices[offset++] = edge;
+          vertices[offset++] =
+            mode === "A" ? 0 : Math.max(0, Math.min(1, p.station - index));
+          vertices[offset++] = r;
+          vertices[offset++] = 0;
+        }
       }
     }
   }

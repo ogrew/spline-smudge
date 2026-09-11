@@ -25,21 +25,47 @@ in vec2 uv; uniform sampler2D image; uniform bool flip; out vec4 color;
 void main(){color=texture(image,vec2(uv.x,flip?1.0-uv.y:uv.y));}`;
 const ribbonVertex = `#version 300 es
 precision highp float;
-layout(location=0) in vec2 position;
-layout(location=1) in vec2 sourceA;
-layout(location=2) in vec2 sourceB;
-layout(location=3) in vec2 strip;
+layout(location=0) in vec2 center;
+layout(location=1) in vec2 normal;
+layout(location=2) in vec2 sourceA;
+layout(location=3) in vec2 sourceB;
+layout(location=4) in vec2 strip;
+layout(location=5) in vec2 misc;
 uniform vec2 resolution;
-out vec2 uvA; out vec2 uvB; out vec2 uv;
-void main(){uv=strip;uvA=sourceA/resolution;uvB=sourceB/resolution;gl_Position=vec4(position/resolution*2.0-1.0,0,1);}`;
+uniform sampler2D image;
+uniform float displacePx;
+uniform float edgeAmount;
+uniform float edgeTexel;
+out vec2 uvA; out vec2 uvB; out vec2 uv; out vec2 ribbonNormal;
+float lum(vec2 p){vec3 c=texture(image,p/resolution).rgb;return dot(c,vec3(0.2126,0.7152,0.0722));}
+void main(){
+uv=strip;uvA=sourceA/resolution;uvB=sourceB/resolution;ribbonNormal=normal;
+float widthScale=1.0;
+if(edgeAmount!=0.0){
+vec2 dx=vec2(edgeTexel,0.0),dy=vec2(0.0,edgeTexel);
+float e=clamp(length(vec2(lum(center+dx)-lum(center-dx),lum(center+dy)-lum(center-dy)))*3.0,0.0,1.0);
+widthScale=clamp(1.0+edgeAmount*(e*2.0-1.0),0.0,3.0);
+}
+vec2 pos=center+normal*(misc.x*widthScale);
+if(displacePx!=0.0)pos+=normal*((lum(center)-0.5)*2.0*displacePx);
+gl_Position=vec4(pos/resolution*2.0-1.0,0,1);}`;
 const ribbonFragment = `#version 300 es
 precision highp float;
-in vec2 uvA; in vec2 uvB; in vec2 uv;
-uniform sampler2D image; uniform bool perPoint; out vec4 color;
+in vec2 uvA; in vec2 uvB; in vec2 uv; in vec2 ribbonNormal;
+uniform sampler2D image; uniform bool perPoint; uniform float shadeAmount; out vec4 color;
 ${colorInterpolationGLSL}
 void main(){
 vec4 a=texture(image,uvA);
 color=perPoint?interpolateColor(a,texture(image,uvB),uv.y):a;
+if(shadeAmount>0.0){
+// Cylinder-profile pseudo normal across the band; light from the upper left in image space.
+float t=uv.x*2.0-1.0;
+vec3 N=normalize(vec3(normalize(ribbonNormal)*t*0.85,sqrt(max(0.02,1.0-0.7225*t*t))));
+vec3 L=normalize(vec3(-0.45,-0.6,0.66));
+float diffuse=max(dot(N,L),0.0);
+float specular=pow(max(dot(reflect(-L,N),vec3(0.0,0.0,1.0)),0.0),24.0);
+color.rgb=color.rgb*mix(1.0,0.35+0.85*diffuse,shadeAmount)+specular*0.5*shadeAmount;
+}
 float edge=max(fwidth(uv.x),0.00001);
 color.a*=smoothstep(0.0,edge,uv.x)*smoothstep(0.0,edge,1.0-uv.x);
 }`;
@@ -86,7 +112,7 @@ export class Renderer {
     this.buffer = gl.createBuffer()!;
     gl.bindVertexArray(this.vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < ribbonStride / 2; i++) {
       gl.enableVertexAttribArray(i);
       gl.vertexAttribPointer(i, 2, gl.FLOAT, false, ribbonStride * 4, i * 8);
     }
@@ -248,7 +274,18 @@ export class Renderer {
       scale = this.width / iw;
     this.copyTo(this.photo!, this.working!);
     const strokes = state.strokes.filter((stroke) => stroke.visible);
-    if (strokes.length) this.ribbonSetup(state.mode === "B");
+    // Prototype toggles; every value is 0/off unless its experiment is enabled.
+    const experiments = state.experiments;
+    const strands = experiments?.strands.on ? experiments.strands : undefined;
+    if (strokes.length)
+      this.ribbonSetup(state.mode === "B", {
+        displacePx: experiments?.displace.on
+          ? ((Math.min(iw, ih) * experiments.displace.amount) / 100) * scale
+          : 0,
+        edgeAmount: experiments?.edgeWidth.on ? experiments.edgeWidth.amount : 0,
+        edgeTexel: 3 * scale,
+        shadeAmount: experiments?.shade.on ? experiments.shade.amount : 0,
+      });
     let chunk = performance.now();
     for (const [index, stroke] of strokes.entries()) {
       if (cancelled() || g.isContextLost()) return false;
@@ -274,7 +311,7 @@ export class Renderer {
       // Sample in source-image distance so zoom does not change the mesh.
       const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale), state.kind);
       if (samples.length > 1) {
-        const verts = ribbonMesh(samples, scaled, state.mode);
+        const verts = ribbonMesh(samples, scaled, state.mode, strands);
         this.uploadRibbon(verts);
         g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
       }
@@ -321,7 +358,15 @@ export class Renderer {
     }
     g.bufferSubData(g.ARRAY_BUFFER, 0, vertices);
   }
-  private ribbonSetup(perPoint: boolean) {
+  private ribbonSetup(
+    perPoint: boolean,
+    experiments: {
+      displacePx: number;
+      edgeAmount: number;
+      edgeTexel: number;
+      shadeAmount: number;
+    },
+  ) {
     const g = this.gl,
       p = this.ribbon;
     this.bind(this.working!);
@@ -336,6 +381,10 @@ export class Renderer {
     );
     this.pair(p, "resolution", this.width, this.height);
     this.flag(p, "perPoint", perPoint);
+    g.uniform1f(this.location(p, "displacePx"), experiments.displacePx);
+    g.uniform1f(this.location(p, "edgeAmount"), experiments.edgeAmount);
+    g.uniform1f(this.location(p, "edgeTexel"), experiments.edgeTexel);
+    g.uniform1f(this.location(p, "shadeAmount"), experiments.shadeAmount);
     this.texture(p, "image", this.photo!.texture, 0);
   }
   present(width: number, height: number) {

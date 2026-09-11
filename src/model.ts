@@ -24,6 +24,28 @@ export type Stroke = {
   bias: number;
   source: Vec & { angle: number; length: number };
 };
+/** Prototype toggles under evaluation. Whole-document, undoable, part of the render snapshot. */
+export type Experiments = {
+  /** Displace the ribbon along its normal by photo luminance. amount: % of the source short edge. */
+  displace: { on: boolean; amount: number };
+  /** Modulate ribbon width by photo edge strength. amount −1..1; negative thins at edges. */
+  edgeWidth: { on: boolean; amount: number };
+  /** Split each ribbon into thin strands. wobble 0..1 sways strands across the band. */
+  strands: { on: boolean; count: number; wobble: number };
+  /** Canvas clicks trace a structure-following curve instead of adding one point. length: % of the source long edge. */
+  flow: { on: boolean; length: number };
+  /** Fake 3D shading across the ribbon cross-section. amount 0..1. */
+  shade: { on: boolean; amount: number };
+};
+export function defaultExperiments(): Experiments {
+  return {
+    displace: { on: false, amount: 6 },
+    edgeWidth: { on: false, amount: 0.6 },
+    strands: { on: false, count: 8, wobble: 0.35 },
+    flow: { on: false, length: 45 },
+    shade: { on: false, amount: 0.6 },
+  };
+}
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.
 export type DocumentState = {
   mode: "A" | "B";
@@ -33,6 +55,7 @@ export type DocumentState = {
   nextStrokeNumber: number;
   background: string;
   longEdge: number;
+  experiments: Experiments;
 };
 export function initialState(width: number, height: number): DocumentState {
   return {
@@ -42,6 +65,7 @@ export function initialState(width: number, height: number): DocumentState {
     nextStrokeNumber: 2,
     background: "#f3f0e8",
     longEdge: 2000,
+    experiments: defaultExperiments(),
     strokes: [
       {
         id: "stroke-1",

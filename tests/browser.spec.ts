@@ -920,3 +920,42 @@ test("renderer clears stale errors and reuses ribbon GPU state", async ({
     usesMipmapFilter: true,
   });
 });
+
+test("experiment toggles change the output, stay undoable, and off matches baseline", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const baseline = await download(page, "spline-smudge-exp-baseline");
+  for (const id of ["exp-displace", "exp-edge", "exp-strands", "exp-shade"]) {
+    await page.locator(`#${id}`).check();
+    await ready(page);
+    const changed = await download(page, `spline-smudge-${id}`);
+    expect(changed.bytes.equals(baseline.bytes)).toBe(false);
+    await page.locator(`#${id}`).uncheck();
+    await ready(page);
+  }
+  // Turning every experiment back off restores the exact baseline pixels.
+  const restored = await download(page, "spline-smudge-exp-restored");
+  expect(restored.bytes.equals(baseline.bytes)).toBe(true);
+  // Flow tracing replaces the active stroke with a curve following the demo stripes.
+  const before = (await debug(page)).strokes[0].points;
+  await page.locator("#exp-flow").check();
+  await ready(page);
+  const rect = await page.locator("#art").boundingBox();
+  if (!rect) throw new Error("No image");
+  const seed = { x: rect.x + rect.width * 0.5, y: rect.y + rect.height * 0.16 };
+  await page.mouse.click(seed.x, seed.y);
+  await ready(page);
+  const traced = (await debug(page)).strokes[0].points;
+  expect(traced.length).toBeGreaterThanOrEqual(4);
+  const seedY = ((seed.y - rect.y) / rect.height) * 1100;
+  for (const p of traced)
+    expect(Math.abs(p.y - seedY)).toBeLessThan(1100 * 0.12);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].points.length).toBe(before.length);
+  expect(
+    await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
+  ).toBe(0);
+});
