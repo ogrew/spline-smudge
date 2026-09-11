@@ -52,7 +52,7 @@ export function initialState(width: number, height: number): DocumentState {
           0.01,
           Math.min(
             Math.round(Math.min(width, height) * 0.13),
-            Math.max(width, height) / 100,
+            Math.max(width, height) / 10,
           ),
         ),
         tension: 0,
