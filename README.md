@@ -2,19 +2,18 @@
 
 写真の色をスプラインに沿って引き伸ばす、TypeScript + WebGL2 + GLSLのブラウザツール。写真1枚に複数のスプラインを重ね、作品全体でA/Bを切り替えられます。
 
+公開サイト：[https://ogrew.github.io/spline-smudge/](https://ogrew.github.io/spline-smudge/)
+
 ## 起動する
 
-Node.js 22.18以上（検証環境：24.4.1）を使用します。
+Node.js 22.18以上を使用します。
 
 ```sh
-cd /Users/ayato/spline-smudge
 npm install
 npm run dev
 ```
 
-[http://127.0.0.1:5173/](http://127.0.0.1:5173/) を開きます。停止はターミナルで `Control + C`。PC再起動後は同じフォルダで `npm run dev` を実行すれば再開できます。普段の起動では `npm install` は不要です。
-
-既存のp5版（ポート8765）とは独立しています。5173が使用中の場合は、以前のSpline Smudgeサーバーが動いていないか確認してください。
+[http://127.0.0.1:5173/](http://127.0.0.1:5173/) を開きます。
 
 ## 最初に試す
 
@@ -115,19 +114,6 @@ npm run test:browser
 
 [計画書](PROJECT_PLAN.md) · [タスクリスト](TASKS.md) · [実装・検証メモ](IMPLEMENTATION.md)
 
-## GitHub管理とサイト公開
+## サイト公開
 
-管理先は [ogrew/spline-smudge](https://github.com/ogrew/spline-smudge) です。
-サイトURLは [Spline Smudge](https://ogrew.github.io/spline-smudge/) です。2026-09-11に所有者の承認を受けてリポジトリを公開に変更し、GitHub Pagesを有効化しました。
-
-`.github/workflows/pages.yml` が、mainへのpush時に依存関係のインストール、テスト、公開用ビルド、Pagesへの配信を行います。配信対象は `dist` のみです。公開用ビルドは `npm run build -- --base=/spline-smudge/` を使い、ローカル開発URLは変えません。
-
-### 公開の設定と更新
-
-1. [Settings → Pages](https://github.com/ogrew/spline-smudge/settings/pages) のSourceは **GitHub Actions** に設定済みです。
-2. 通常はmainへpushするだけで自動配信します。手動で再配信する場合は [Actions](https://github.com/ogrew/spline-smudge/actions) で **Deploy GitHub Pages → Run workflow → main** を実行します。
-3. 実行成功後、公開URLで初期描画、画像選択、A/B切替、PNGエクスポートを確認します。
-
-初回設定を済ませれば、以後mainへのpushで自動更新されます。失敗した場合はActionsの実行ログを確認します。既に公開済みのサイトは、新しいデプロイが成功するまで従来の内容を維持します。戻す場合は対象の変更を `git revert` してmainにpushします。
-
-サイトは誰でもアクセスでき、配信されるJavaScriptも閲覧可能です。利用者が選択した画像はブラウザ内で処理され、GitHubには送信されません。編集内容は再読み込みで失われるため、必要な作品は先にエクスポートしてください。
+mainへのpushで `.github/workflows/pages.yml` がテスト・ビルド・GitHub Pagesへの配信を行います。公開サイトは [https://ogrew.github.io/spline-smudge/](https://ogrew.github.io/spline-smudge/) です。
