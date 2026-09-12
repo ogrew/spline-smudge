@@ -93,10 +93,12 @@ export function initialState(width: number, height: number): DocumentState {
         name: "Stroke 01",
         visible: true,
         points: [],
+        // 5% of the short edge but at least 10px, kept under the slider cap of
+        // a tenth of the long edge (tiny images resolve in the cap's favor).
         width: Math.max(
           1,
           Math.min(
-            Math.round(Math.min(width, height) * 0.13),
+            Math.max(10, Math.round(Math.min(width, height) * 0.05)),
             Math.floor(Math.max(width, height) / 10),
           ),
         ),
