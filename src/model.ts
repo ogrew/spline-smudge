@@ -24,6 +24,18 @@ export type Stroke = {
   bias: number;
   source: Vec & { angle: number; length: number };
 };
+/** B-mode color interpolation between adjacent source lines.
+ * "srgb" mixes encoded channels (the original behaviour); the OKLab family
+ * converts through a perceptual space so midpoints stay clean. "hueSpin"
+ * follows OKLCH but adds a fixed extra hue rotation across each interval. */
+export type MixMode = "srgb" | "oklab" | "oklch" | "oklchLong" | "hueSpin";
+export const mixModes: Record<MixMode, string> = {
+  srgb: "sRGB（従来）",
+  oklab: "OKLab",
+  oklch: "OKLCH · 色相近回り",
+  oklchLong: "OKLCH · 色相遠回り",
+  hueSpin: "色相回転（OKLCH）",
+};
 export type ReactionMode = "displace" | "edgeWidth";
 export const reactionModes: Record<ReactionMode, string> = {
   displace: "輝度ディスプレイスメント",
@@ -61,6 +73,9 @@ export type DocumentState = {
   background: string;
   longEdge: number;
   options: Options;
+  /** turns: extra full hue rotations per interval for mode "hueSpin". Whole turns
+   * keep the sampled colors exact at every control point and interval join. */
+  mix: { mode: MixMode; turns: number };
 };
 export function initialState(width: number, height: number): DocumentState {
   return {
@@ -71,6 +86,7 @@ export function initialState(width: number, height: number): DocumentState {
     background: "#f3f0e8",
     longEdge: 2000,
     options: defaultOptions(),
+    mix: { mode: "srgb", turns: 1 },
     strokes: [
       {
         id: "stroke-1",

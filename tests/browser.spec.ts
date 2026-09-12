@@ -410,6 +410,14 @@ test("B shader reproduces point colors and interpolates RGB without picking up i
       return result;
     };
     const baseline = await pixels();
+    // Perceptual interpolation: endpoints stay put, midpoints move.
+    state.mix = { mode: "oklab", turns: 1 };
+    const oklab = await pixels();
+    state.mix = { mode: "oklch", turns: 1 };
+    const oklch = await pixels();
+    state.mix = { mode: "hueSpin", turns: 1 };
+    const hueSpin = await pixels();
+    state.mix = { mode: "srgb", turns: 1 };
     x.fillStyle = "#ffff00";
     x.fillRect(45, 0, 30, 150);
     // A new source object invalidates the image cache, keeping settings identical.
@@ -434,7 +442,7 @@ test("B shader reproduces point colors and interpolates RGB without picking up i
     const changed = Array.from(ctx.getImageData(60, 75, 1, 1).data);
     const glError = r.gl.getError();
     r.gl.getExtension("WEBGL_lose_context")?.loseContext();
-    return { baseline, changed, glError };
+    return { baseline, oklab, oklch, hueSpin, changed, glError };
   });
   const expected = [
     [255, 0, 0, 255],
@@ -443,11 +451,26 @@ test("B shader reproduces point colors and interpolates RGB without picking up i
     [0, 128, 128, 255],
     [0, 0, 255, 255],
   ];
-  result.baseline.forEach((pixel: number[], i: number) =>
+  const near = (pixel: number[], target: number[], tolerance: number) =>
     pixel.forEach((channel, j) =>
-      expect(Math.abs(channel - expected[i][j])).toBeLessThanOrEqual(4),
-    ),
+      expect(Math.abs(channel - target[j])).toBeLessThanOrEqual(tolerance),
+    );
+  result.baseline.forEach((pixel: number[], i: number) =>
+    near(pixel, expected[i], 4),
   );
+  // Endpoints reproduce the sampled colors in every interpolation mode.
+  for (const mode of [result.oklab, result.oklch, result.hueSpin])
+    for (const i of [0, 2, 4]) near(mode[i], expected[i], 4);
+  // Red→green midpoint: OKLab keeps brightness, OKLCH passes through orange.
+  near(result.oklab[1], [208, 168, 0, 255], 6);
+  near(result.oklch[1], [249, 149, 0, 255], 6);
+  // A full extra hue turn flips the midpoint hue while endpoints stay exact.
+  const hueDistance = Math.hypot(
+    result.hueSpin[1][0] - result.oklch[1][0],
+    result.hueSpin[1][1] - result.oklch[1][1],
+    result.hueSpin[1][2] - result.oklch[1][2],
+  );
+  expect(hueDistance).toBeGreaterThan(60);
   expect(result.changed).toEqual(result.baseline[1]);
   expect(result.glError).toBe(0);
 });
@@ -969,4 +992,34 @@ test("photo options change the output, reveal settings only while on, and off ma
   expect(
     await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
   ).toBe(0);
+});
+
+test("B color interpolation select swaps modes and shows the spin slider only for hue rotation", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await page.locator("#mode-b").click();
+  await ready(page);
+  await expect(page.locator("#mix-spin-row")).toBeHidden();
+  const baseline = await download(page, "spline-smudge-mix-srgb");
+  await page.locator("#mix-mode").selectOption("oklab");
+  await ready(page);
+  const oklab = await download(page, "spline-smudge-mix-oklab");
+  expect(oklab.bytes.equals(baseline.bytes)).toBe(false);
+  await page.locator("#mix-mode").selectOption("hueSpin");
+  await ready(page);
+  await expect(page.locator("#mix-spin-row")).toBeVisible();
+  expect(await page.locator("#mix-spin").inputValue()).toBe("1");
+  const spun = await download(page, "spline-smudge-mix-spin");
+  expect(spun.bytes.equals(oklab.bytes)).toBe(false);
+  await page.locator("#mix-mode").selectOption("srgb");
+  await ready(page);
+  await expect(page.locator("#mix-spin-row")).toBeHidden();
+  const restored = await download(page, "spline-smudge-mix-restored");
+  expect(restored.bytes.equals(baseline.bytes)).toBe(true);
+  // Mode changes participate in undo.
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).mix.mode).toBe("hueSpin");
 });
