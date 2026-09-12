@@ -84,6 +84,9 @@ export class Renderer {
   private complete?: Target;
   private sourceKey = "";
   private sourceObject?: CanvasImageSource;
+  // False whenever another pass (e.g. present() during an await) may have
+  // changed framebuffer, viewport, program, VAO, blend or texture state.
+  private ribbonReady = false;
   width = 1;
   height = 1;
   ready = false;
@@ -208,6 +211,7 @@ export class Renderer {
   }
   private copyTo(source: Target, target: Target | null, flip = false) {
     const g = this.gl;
+    this.ribbonReady = false;
     this.bind(target);
     g.disable(g.BLEND);
     g.useProgram(this.copy.program);
@@ -277,23 +281,22 @@ export class Renderer {
     // Photo-reactive options: each coefficient is 0 while its option is off,
     // which makes the shader output identical to the plain ribbon.
     const { reaction, shade } = state.options;
-    if (strokes.length)
-      this.ribbonSetup(state.mode === "B", {
-        displacePx:
-          reaction.on && reaction.mode === "displace"
-            ? ((Math.min(iw, ih) * reaction.displaceAmount) / 100) * scale
-            : 0,
-        edgeAmount:
-          reaction.on && reaction.mode === "edgeWidth" ? reaction.edgeAmount : 0,
-        edgeTexel: 3 * scale,
-        shadeAmount: shade.on ? shade.amount : 0,
-        mixMode: mixModeIndex[state.mix.mode],
-        // Whole turns only: the endpoints of every interval keep their sampled color.
-        mixSpin:
-          state.mix.mode === "hueSpin"
-            ? Math.round(state.mix.turns) * 2 * Math.PI
-            : 0,
-      });
+    const setup = {
+      displacePx:
+        reaction.on && reaction.mode === "displace"
+          ? ((Math.min(iw, ih) * reaction.displaceAmount) / 100) * scale
+          : 0,
+      edgeAmount:
+        reaction.on && reaction.mode === "edgeWidth" ? reaction.edgeAmount : 0,
+      edgeTexel: 3 * scale,
+      shadeAmount: shade.on ? shade.amount : 0,
+      mixMode: mixModeIndex[state.mix.mode],
+      // Whole turns only: the endpoints of every interval keep their sampled color.
+      mixSpin:
+        state.mix.mode === "hueSpin"
+          ? Math.round(state.mix.turns) * 2 * Math.PI
+          : 0,
+    };
     let chunk = performance.now();
     for (const [index, stroke] of strokes.entries()) {
       if (cancelled() || g.isContextLost()) return false;
@@ -319,6 +322,9 @@ export class Renderer {
       // Sample in source-image distance so zoom does not change the mesh.
       const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale), state.kind);
       if (samples.length > 1) {
+        // A present() during the await below leaves foreign GPU state behind;
+        // rebind the ribbon pipeline lazily so each stroke draws into working.
+        if (!this.ribbonReady) this.ribbonSetup(state.mode === "B", setup);
         const verts = ribbonMesh(samples, scaled, state.mode);
         this.uploadRibbon(verts);
         g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
@@ -398,6 +404,7 @@ export class Renderer {
     g.uniform1i(this.location(p, "mixMode"), options.mixMode);
     g.uniform1f(this.location(p, "mixSpin"), options.mixSpin);
     this.texture(p, "image", this.photo!.texture, 0);
+    this.ribbonReady = true;
   }
   present(width: number, height: number) {
     if (!this.ready || !this.complete) return;

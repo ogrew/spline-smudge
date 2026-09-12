@@ -1023,3 +1023,83 @@ test("B color interpolation select swaps modes and shows the spin slider only fo
   await ready(page);
   expect((await debug(page)).mix.mode).toBe("hueSpin");
 });
+
+test("a present() during a rendering wait does not drop later strokes", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    const { Renderer } = await import("/src/renderer.ts");
+    const { initialState, activeStroke, addStroke } =
+      await import("/src/model.ts");
+    const image = document.createElement("canvas");
+    image.width = 100;
+    image.height = 100;
+    const x = image.getContext("2d")!;
+    x.fillStyle = "#0000ff";
+    x.fillRect(0, 0, 100, 100);
+    x.fillStyle = "#ff0000";
+    x.fillRect(0, 0, 100, 20);
+    x.fillStyle = "#00ff00";
+    x.fillRect(0, 20, 100, 20);
+    const renderer = new Renderer(document.createElement("canvas"));
+    const state = initialState(100, 100);
+    state.longEdge = 100;
+    const red = activeStroke(state);
+    red.width = 10;
+    red.points = [
+      { id: "r0", x: 10, y: 60, factor: 1 },
+      { id: "r1", x: 90, y: 60, factor: 1 },
+    ];
+    red.source = { x: 50, y: 10, angle: 0, length: 1 };
+    const green = addStroke(state);
+    green.width = 10;
+    green.points = [
+      { id: "g0", x: 10, y: 80, factor: 1 },
+      { id: "g1", x: 90, y: 80, factor: 1 },
+    ];
+    green.source = { x: 50, y: 30, angle: 0, length: 1 };
+    const pixels = async () => {
+      const bitmap = await createImageBitmap(await renderer.exportPNG());
+      const c = document.createElement("canvas");
+      c.width = 100;
+      c.height = 100;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(bitmap, 0, 0);
+      const out = [
+        [50, 60],
+        [50, 80],
+      ].map(([px, py]) => Array.from(ctx.getImageData(px, py, 1, 1).data));
+      bitmap.close();
+      return out;
+    };
+    await renderer.render(image, 100, 100, state, () => false, () => {});
+    const undisturbed = await pixels();
+    // Re-render, blowing the frame budget on the first stroke and queueing a
+    // presentation into the same frame so it runs before the loop resumes.
+    let first = true;
+    await renderer.render(
+      image,
+      100,
+      100,
+      state,
+      () => false,
+      () => {
+        if (!first) return;
+        first = false;
+        requestAnimationFrame(() => renderer.present(100, 100));
+        const start = performance.now();
+        while (performance.now() - start < 12) {}
+      },
+    );
+    const disturbed = await pixels();
+    const glError = renderer.gl.getError();
+    renderer.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return { undisturbed, disturbed, glError };
+  });
+  expect(result.undisturbed[0]).toEqual([255, 0, 0, 255]);
+  expect(result.undisturbed[1]).toEqual([0, 255, 0, 255]);
+  expect(result.disturbed).toEqual(result.undisturbed);
+  expect(result.glError).toBe(0);
+});
