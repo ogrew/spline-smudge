@@ -82,3 +82,12 @@ test("discarding a canceled edit removes its undo entry and preserves redo", () 
   assert.equal(state.background, "#f3f0e8");
   assert.equal(history.redo(state).background, "#000000");
 });
+test("initial base width is 5% of the short edge, at least 10px, under the slider cap", () => {
+  const width = (w: number, h: number) => activeStroke(initialState(w, h)).width;
+  assert.equal(width(1600, 1100), 55);
+  assert.equal(width(6000, 4000), 200);
+  // The 10px floor applies when 5% of the short edge is smaller.
+  assert.equal(width(400, 100), 10);
+  // Tiny images resolve in favor of the long-edge/10 slider cap.
+  assert.equal(width(50, 40), 5);
+});
