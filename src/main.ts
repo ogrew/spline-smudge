@@ -13,6 +13,8 @@ import {
   pointSource,
   rescaleDocument,
   reactionModes,
+  separationModes,
+  type SeparationMode,
   mixModes,
   type MixMode,
   type SourceSettings,
@@ -57,7 +59,13 @@ document.querySelector("#app")!.innerHTML = `
   .map(([key, label]) => `<option value="${key}">${label}</option>`)
   .join(
     "",
-  )}</select><div id="reaction-displace">${range("displace-amount", "変位量（短辺比）", -20, 20, 0.5)}</div><div id="reaction-edge">${range("edge-amount", "効き", -1, 1, 0.05)}</div></div><label class="option-toggle"><input id="shade" type="checkbox">フェイク3D</label><div id="shade-settings" class="option-settings" hidden>${range("shade-amount", "強さ", 0, 1, 0.05)}</div></section>
+  )}</select><div id="reaction-displace">${range("displace-amount", "変位量（短辺比）", -20, 20, 0.5)}</div><div id="reaction-edge">${range("edge-amount", "効き", -1, 1, 0.05)}</div></div><label class="option-toggle"><input id="shade" type="checkbox">フェイク3D</label><div id="shade-settings" class="option-settings" hidden>${range("shade-amount", "強さ", 0, 1, 0.05)}</div><label class="option-toggle"><input id="separation" type="checkbox">周波数分離</label><div id="separation-settings" class="option-settings" hidden><label class="sr-only" for="separation-mode">分離モード</label><select id="separation-mode">${Object.entries(
+  separationModes,
+)
+  .map(([key, label]) => `<option value="${key}">${label}</option>`)
+  .join(
+    "",
+  )}</select>${range("separation-radius", "分離半径（長辺比）", 0.5, 5, 0.1)}${range("separation-restore", "戻し量", 0, 200, 5)}</div></section>
 <section><div class="section-title">05 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px</option><option value="5000">5000 px</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label></section></fieldset></aside>
 <div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;
 
@@ -158,6 +166,14 @@ function sync() {
       options().reaction.edgeAmount.toFixed(2),
     ],
     "shade-amount": [options().shade.amount, options().shade.amount.toFixed(2)],
+    "separation-radius": [
+      options().separation.radius,
+      `${options().separation.radius.toFixed(1)}%`,
+    ],
+    "separation-restore": [
+      options().separation.restore,
+      `${Math.round(options().separation.restore)}%`,
+    ],
     "mix-spin": [
       state.mix.turns,
       `${state.mix.turns > 0 ? "+" : ""}${state.mix.turns} 回転`,
@@ -173,6 +189,9 @@ function sync() {
   $("reaction-displace").hidden = options().reaction.mode !== "displace";
   $("reaction-edge").hidden = options().reaction.mode !== "edgeWidth";
   $("shade-settings").hidden = !options().shade.on;
+  $<HTMLInputElement>("separation").checked = options().separation.on;
+  $<HTMLSelectElement>("separation-mode").value = options().separation.mode;
+  $("separation-settings").hidden = !options().separation.on;
   $<HTMLInputElement>("width").max = String(
     Math.max(1, Math.floor(Math.max(iw, ih) / 10)),
   );
@@ -453,6 +472,8 @@ const changes: Record<string, (v: number) => void> = {
   "displace-amount": (v) => (options().reaction.displaceAmount = v),
   "edge-amount": (v) => (options().reaction.edgeAmount = v),
   "shade-amount": (v) => (options().shade.amount = v),
+  "separation-radius": (v) => (options().separation.radius = v),
+  "separation-restore": (v) => (options().separation.restore = v),
   "mix-spin": (v) => (state.mix.turns = Math.round(v)),
 };
 const currentValues: Record<string, () => number> = {
@@ -466,11 +487,14 @@ const currentValues: Record<string, () => number> = {
   "displace-amount": () => options().reaction.displaceAmount,
   "edge-amount": () => options().reaction.edgeAmount,
   "shade-amount": () => options().shade.amount,
+  "separation-radius": () => options().separation.radius,
+  "separation-restore": () => options().separation.restore,
   "mix-spin": () => state.mix.turns,
 };
 for (const [id, apply] of Object.entries({
   reaction: (on: boolean) => (options().reaction.on = on),
   shade: (on: boolean) => (options().shade.on = on),
+  separation: (on: boolean) => (options().separation.on = on),
 }))
   $<HTMLInputElement>(id).onchange = () =>
     edit(() => apply($<HTMLInputElement>(id).checked));
@@ -478,6 +502,12 @@ $("mix-mode").onchange = () =>
   edit(
     () =>
       (state.mix.mode = $<HTMLSelectElement>("mix-mode").value as MixMode),
+  );
+$("separation-mode").onchange = () =>
+  edit(
+    () =>
+      (options().separation.mode = $<HTMLSelectElement>("separation-mode")
+        .value as SeparationMode),
   );
 $("reaction-mode").onchange = () =>
   edit(

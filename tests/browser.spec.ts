@@ -1236,3 +1236,112 @@ test("loading a new image carries the composition over, rescaled and centered", 
   await ready(page);
   await expect(page.locator("#undo")).toBeEnabled();
 });
+
+test("frequency separation keeps one band in place while the other flows", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    const { Renderer } = await import("/src/renderer.ts");
+    const { initialState, activeStroke } = await import("/src/model.ts");
+    const image = document.createElement("canvas");
+    image.width = 200;
+    image.height = 150;
+    const x = image.getContext("2d")!;
+    x.fillStyle = "#808080";
+    x.fillRect(0, 0, 200, 150);
+    x.fillStyle = "#ff8000";
+    x.fillRect(0, 0, 200, 20);
+    // Fine texture: 1px black/white columns under the stroke.
+    for (let column = 0; column < 200; column++) {
+      x.fillStyle = column % 2 ? "#ffffff" : "#000000";
+      x.fillRect(column, 40, 1, 110);
+    }
+    const renderer = new Renderer(document.createElement("canvas"));
+    const state = initialState(200, 150);
+    state.longEdge = 200;
+    const stroke = activeStroke(state);
+    stroke.width = 20;
+    stroke.points = [
+      { id: "a", x: 20, y: 75, factor: 1 },
+      { id: "b", x: 180, y: 75, factor: 1 },
+    ];
+    stroke.source = { x: 100, y: 10, angle: 0, length: 1 };
+    const pixels = async () => {
+      await renderer.render(image, 200, 150, state, () => false, () => {});
+      const bitmap = await createImageBitmap(await renderer.exportPNG());
+      const c = document.createElement("canvas");
+      c.width = 200;
+      c.height = 150;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(bitmap, 0, 0);
+      const out = [
+        [100, 75],
+        [101, 75],
+        [100, 140],
+        [101, 140],
+      ].map(([px, py]) => Array.from(ctx.getImageData(px, py, 1, 1).data));
+      bitmap.close();
+      return out;
+    };
+    const off = await pixels();
+    state.options.separation = {
+      on: true,
+      mode: "color",
+      radius: 5,
+      restore: 100,
+    };
+    const color = await pixels();
+    state.options.separation.mode = "texture";
+    const texture = await pixels();
+    const glError = renderer.gl.getError();
+    renderer.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return { off, color, texture, glError };
+  });
+  const spread = (a: number[], b: number[]) =>
+    Math.max(...a.slice(0, 3).map((v, i) => Math.abs(v - b[i])));
+  // Off: the ribbon paints a flat sampled color over the stripes.
+  expect(result.off[0]).toEqual(result.off[1]);
+  expect(result.off[0].slice(0, 3)).toEqual([255, 128, 0]);
+  // Color mode: local texture survives inside the ribbon (adjacent pixels split
+  // along the stripes), and untouched stripes stay byte-exact at 100% restore.
+  expect(spread(result.color[0], result.color[1])).toBeGreaterThan(60);
+  expect(result.color[2]).toEqual([0, 0, 0, 255]);
+  expect(result.color[3]).toEqual([255, 255, 255, 255]);
+  // Texture mode: the ribbon keeps the local (blurred) colors — adjacent pixels
+  // stay close and far from the flat smear — while untouched stripes stay exact.
+  expect(spread(result.texture[0], result.texture[1])).toBeLessThan(30);
+  expect(spread(result.texture[0], result.off[0])).toBeGreaterThan(40);
+  expect(result.texture[2]).toEqual([0, 0, 0, 255]);
+  expect(result.texture[3]).toEqual([255, 255, 255, 255]);
+  expect(result.glError).toBe(0);
+});
+
+test("separation option reveals settings, changes exports and restores exactly", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await expect(page.locator("#separation-settings")).toBeHidden();
+  const baseline = await download(page, "spline-smudge-sep-baseline");
+  await page.locator("#separation").check();
+  await ready(page);
+  await expect(page.locator("#separation-settings")).toBeVisible();
+  expect((await debug(page)).options.separation.on).toBe(true);
+  const color = await download(page, "spline-smudge-sep-color");
+  expect(color.bytes.equals(baseline.bytes)).toBe(false);
+  await page.locator("#separation-mode").selectOption("texture");
+  await ready(page);
+  const texture = await download(page, "spline-smudge-sep-texture");
+  expect(texture.bytes.equals(baseline.bytes)).toBe(false);
+  expect(texture.bytes.equals(color.bytes)).toBe(false);
+  await page.locator("#separation").uncheck();
+  await ready(page);
+  await expect(page.locator("#separation-settings")).toBeHidden();
+  const restored = await download(page, "spline-smudge-sep-restored");
+  expect(restored.bytes.equals(baseline.bytes)).toBe(true);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).options.separation.on).toBe(true);
+});

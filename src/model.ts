@@ -41,6 +41,11 @@ export const reactionModes: Record<ReactionMode, string> = {
   displace: "輝度ディスプレイスメント",
   edgeWidth: "エッジで幅を変調",
 };
+export type SeparationMode = "color" | "texture";
+export const separationModes: Record<SeparationMode, string> = {
+  color: "色を流す（質感は残す）",
+  texture: "質感を流す（色は残す）",
+};
 /** Photo-reactive options. Whole-document, undoable, part of the render snapshot. */
 export type Options = {
   /** Deform the ribbon from the photo with one selectable algorithm:
@@ -56,11 +61,23 @@ export type Options = {
   };
   /** Fake 3D: cylinder-profile shading across the ribbon cross-section, 0..1. */
   shade: { on: boolean; amount: number };
+  /** Frequency separation: the ribbon smears one band of the photo while the
+   * other stays in place. "color" flows the blurred colors and restores the
+   * local detail on top; "texture" flows the detail and restores local colors.
+   * radius: blur radius as % of the source long edge. restore: how much of the
+   * kept band is added back, in % — at 100 the photo outside strokes is exact. */
+  separation: {
+    on: boolean;
+    mode: SeparationMode;
+    radius: number;
+    restore: number;
+  };
 };
 export function defaultOptions(): Options {
   return {
     reaction: { on: false, mode: "displace", displaceAmount: 6, edgeAmount: 0.6 },
     shade: { on: false, amount: 0.65 },
+    separation: { on: false, mode: "color", radius: 1.5, restore: 100 },
   };
 }
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.

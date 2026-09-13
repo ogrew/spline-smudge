@@ -23,6 +23,38 @@ const copyFragment = `#version 300 es
 precision highp float;
 in vec2 uv; uniform sampler2D image; uniform bool flip; out vec4 color;
 void main(){color=texture(image,vec2(uv.x,flip?1.0-uv.y:uv.y));}`;
+// Separable gaussian: 13 taps at a stride matched by the mip level read, so a
+// large radius stays cheap and prefiltered. highPass turns the second pass
+// into a visualized detail band: photo - low + 0.5.
+const blurFragment = `#version 300 es
+precision highp float;
+in vec2 uv; uniform sampler2D image; uniform sampler2D original;
+uniform vec2 step; uniform float lod; uniform bool highPass; out vec4 color;
+void main(){
+const float w[7]=float[](1.0,0.8825,0.6065,0.3247,0.1353,0.0439,0.0111);
+vec3 sum=textureLod(image,uv,lod).rgb*w[0];
+float total=w[0];
+for(int i=1;i<7;i++){
+sum+=textureLod(image,uv+step*float(i),lod).rgb*w[i];
+sum+=textureLod(image,uv-step*float(i),lod).rgb*w[i];
+total+=2.0*w[i];
+}
+vec3 low=sum/total;
+color=vec4(highPass?texture(original,uv).rgb-low+0.5:low,1.0);
+}`;
+// Resolve the composited working image into the completed target. Mode 0 is a
+// plain copy; 1 adds the detail band back on the smeared colors; 2 adds the
+// color band back under the smeared detail. flow holds low (1) or photo-low+0.5 (2).
+const separateFragment = `#version 300 es
+precision highp float;
+in vec2 uv; uniform sampler2D comp; uniform sampler2D photo; uniform sampler2D flow;
+uniform int sepMode; uniform float sepStrength; out vec4 color;
+void main(){
+vec3 c=texture(comp,uv).rgb;
+if(sepMode==1)c+=(texture(photo,uv).rgb-texture(flow,uv).rgb)*sepStrength;
+else if(sepMode==2)c=c-0.5+(texture(photo,uv).rgb-texture(flow,uv).rgb+0.5)*sepStrength;
+color=vec4(clamp(c,0.0,1.0),1.0);
+}`;
 const ribbonVertex = `#version 300 es
 precision highp float;
 layout(location=0) in vec2 center;
@@ -76,12 +108,20 @@ export class Renderer {
   readonly limit: number;
   private copy: Program;
   private ribbon: Program;
+  private blur: Program;
+  private separate: Program;
   private vao: WebGLVertexArrayObject;
   private buffer: WebGLBuffer;
   private bufferCapacity = 0;
   private photo?: Target;
   private working?: Target;
   private complete?: Target;
+  // Frequency separation: the band the ribbons sample (low, or photo-low+0.5),
+  // rebuilt only when the mode or radius changes.
+  private flow?: Target;
+  private flowKey = "";
+  private photoMipsReady = false;
+  private mipSampler: WebGLSampler;
   private sourceKey = "";
   private sourceObject?: CanvasImageSource;
   // False whenever another pass (e.g. present() during an await) may have
@@ -110,6 +150,16 @@ export class Renderer {
       viewport[1],
     );
     this.copy = this.program(fullVertex, copyFragment);
+    this.blur = this.program(fullVertex, blurFragment);
+    this.separate = this.program(fullVertex, separateFragment);
+    // Overrides a texture's own filter during blur passes so textureLod can
+    // read prefiltered mip levels without changing normal sampling.
+    this.mipSampler = gl.createSampler()!;
+    gl.samplerParameteri(
+      this.mipSampler,
+      gl.TEXTURE_MIN_FILTER,
+      gl.LINEAR_MIPMAP_LINEAR,
+    );
     this.ribbon = this.program(ribbonVertex, ribbonFragment);
     this.vao = gl.createVertexArray()!;
     this.buffer = gl.createBuffer()!;
@@ -156,7 +206,7 @@ export class Renderer {
     g.bindTexture(g.TEXTURE_2D, t);
     g.uniform1i(this.location(p, key), unit);
   }
-  private target(w: number, h: number, mipmapped = false): Target {
+  private target(w: number, h: number, mipmapped = false, filtered = mipmapped): Target {
     const g = this.gl;
     // WebGL errors are sticky. Only errors raised by this allocation should decide its result.
     while (g.getError() !== g.NO_ERROR) {}
@@ -168,7 +218,7 @@ export class Renderer {
     g.texParameteri(
       g.TEXTURE_2D,
       g.TEXTURE_MIN_FILTER,
-      mipmapped ? g.LINEAR_MIPMAP_LINEAR : g.LINEAR,
+      filtered ? g.LINEAR_MIPMAP_LINEAR : g.LINEAR,
     );
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_MAG_FILTER, g.LINEAR);
     g.texParameteri(g.TEXTURE_2D, g.TEXTURE_WRAP_S, g.CLAMP_TO_EDGE);
@@ -241,7 +291,10 @@ export class Renderer {
     this.drop(this.photo);
     this.drop(this.working);
     this.drop(this.complete);
-    this.photo = this.working = this.complete = undefined;
+    this.drop(this.flow);
+    this.photo = this.working = this.complete = this.flow = undefined;
+    this.flowKey = "";
+    this.photoMipsReady = false;
     this.width = w;
     this.height = h;
     const staging = document.createElement("canvas");
@@ -251,8 +304,9 @@ export class Renderer {
     ctx.fillStyle = state.background;
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(source, 0, 0, w, h);
-    this.photo = this.target(w, h);
-    // Both result targets alternate between working and complete roles.
+    // Mip levels are allocated for the separation blur (filled lazily), but the
+    // photo keeps a non-mip filter so normal sampling is unchanged.
+    this.photo = this.target(w, h, true, false);
     this.working = this.target(w, h, true);
     this.complete = this.target(w, h, true);
     const g = this.gl;
@@ -276,12 +330,21 @@ export class Renderer {
     this.prepare(source, iw, ih, state);
     const g = this.gl,
       scale = this.width / iw;
-    this.copyTo(this.photo!, this.working!);
+    // Frequency separation: ribbons sample one band of the photo (the flow
+    // texture) and the resolve pass adds the other band back on top.
+    const { reaction, shade, separation } = state.options;
+    const sepOn = !!separation?.on;
+    if (sepOn)
+      this.ensureFlow(
+        separation.mode,
+        Math.max(1, ((Math.max(iw, ih) * separation.radius) / 100) * scale),
+      );
+    this.copyTo(sepOn ? this.flow! : this.photo!, this.working!);
     const strokes = state.strokes.filter((stroke) => stroke.visible);
     // Photo-reactive options: each coefficient is 0 while its option is off,
     // which makes the shader output identical to the plain ribbon.
-    const { reaction, shade } = state.options;
     const setup = {
+      image: (sepOn ? this.flow! : this.photo!).texture,
       displacePx:
         reaction.on && reaction.mode === "displace"
           ? ((Math.min(iw, ih) * reaction.displaceAmount) / 100) * scale
@@ -336,9 +399,16 @@ export class Renderer {
       }
     }
     if (cancelled() || g.isContextLost()) return false;
-    g.bindTexture(g.TEXTURE_2D, this.working!.texture);
+    // Resolve working into the completed target: a plain copy, or the
+    // separation add-back. Until here a cancelled job never touches complete;
+    // past this point the image written there is always fully drawn.
+    this.resolve(
+      sepOn ? (separation.mode === "color" ? 1 : 2) : 0,
+      sepOn ? separation.restore / 100 : 0,
+    );
+    g.bindTexture(g.TEXTURE_2D, this.complete!.texture);
     g.generateMipmap(g.TEXTURE_2D);
-    // Wait for GPU completion without blocking the UI; cancelled jobs never replace the completed image.
+    // Wait for GPU completion without blocking the UI.
     const fence = g.fenceSync(g.SYNC_GPU_COMMANDS_COMPLETE, 0)!;
     g.flush();
     try {
@@ -356,10 +426,67 @@ export class Renderer {
     } finally {
       g.deleteSync(fence);
     }
-    [this.working, this.complete] = [this.complete, this.working];
     this.ready = true;
     progress(1);
     return true;
+  }
+  /** Build the band the ribbons sample: a prefiltered separable gaussian of the
+   * photo (mode "color"), or its visualized detail band (mode "texture"). Uses
+   * working as a scratch target before the base copy overwrites it. */
+  private ensureFlow(mode: "color" | "texture", radiusPx: number) {
+    const g = this.gl;
+    this.flow ??= this.target(this.width, this.height);
+    const key = `${mode}:${Math.round(radiusPx * 10)}`;
+    if (key === this.flowKey) return;
+    if (!this.photoMipsReady) {
+      g.bindTexture(g.TEXTURE_2D, this.photo!.texture);
+      g.generateMipmap(g.TEXTURE_2D);
+      this.photoMipsReady = true;
+    }
+    const stride = Math.max(1, radiusPx / 4),
+      lod = Math.max(0, Math.log2(stride));
+    const p = this.blur;
+    g.disable(g.BLEND);
+    g.useProgram(p.program);
+    g.bindVertexArray(null);
+    g.bindSampler(0, this.mipSampler);
+    g.uniform1f(this.location(p, "lod"), lod);
+    // Horizontal: photo -> working.
+    this.bind(this.working!);
+    this.texture(p, "image", this.photo!.texture, 0);
+    this.texture(p, "original", this.photo!.texture, 1);
+    this.pair(p, "step", stride / this.width, 0);
+    this.flag(p, "highPass", false);
+    g.drawArrays(g.TRIANGLES, 0, 3);
+    // Vertical (into the detail band for mode "texture"): working -> flow.
+    g.activeTexture(g.TEXTURE0);
+    g.bindTexture(g.TEXTURE_2D, this.working!.texture);
+    g.generateMipmap(g.TEXTURE_2D);
+    this.bind(this.flow);
+    this.texture(p, "image", this.working!.texture, 0);
+    this.pair(p, "step", 0, stride / this.height);
+    this.flag(p, "highPass", mode === "texture");
+    g.drawArrays(g.TRIANGLES, 0, 3);
+    g.bindSampler(0, null);
+    this.flowKey = key;
+    this.ribbonReady = false;
+  }
+  /** Write working into complete: sepMode 0 copies, 1 adds photo-flow (the
+   * detail band) scaled by sepStrength, 2 rebuilds colors under smeared detail. */
+  private resolve(sepMode: number, sepStrength: number) {
+    const g = this.gl,
+      p = this.separate;
+    this.bind(this.complete!);
+    g.disable(g.BLEND);
+    g.useProgram(p.program);
+    g.bindVertexArray(null);
+    this.texture(p, "comp", this.working!.texture, 0);
+    this.texture(p, "photo", this.photo!.texture, 1);
+    this.texture(p, "flow", (this.flow ?? this.photo!).texture, 2);
+    g.uniform1i(this.location(p, "sepMode"), sepMode);
+    g.uniform1f(this.location(p, "sepStrength"), sepStrength);
+    g.drawArrays(g.TRIANGLES, 0, 3);
+    this.ribbonReady = false;
   }
   private uploadRibbon(vertices: Float32Array) {
     const g = this.gl;
@@ -375,6 +502,7 @@ export class Renderer {
   private ribbonSetup(
     perPoint: boolean,
     options: {
+      image: WebGLTexture;
       displacePx: number;
       edgeAmount: number;
       edgeTexel: number;
@@ -403,7 +531,7 @@ export class Renderer {
     g.uniform1f(this.location(p, "shadeAmount"), options.shadeAmount);
     g.uniform1i(this.location(p, "mixMode"), options.mixMode);
     g.uniform1f(this.location(p, "mixSpin"), options.mixSpin);
-    this.texture(p, "image", this.photo!.texture, 0);
+    this.texture(p, "image", options.image, 0);
     this.ribbonReady = true;
   }
   present(width: number, height: number) {
