@@ -8,6 +8,7 @@ import {
   moveStroke,
   History,
   exportKind,
+  rescaleDocument,
 } from "../src/model.ts";
 test("duplicate gets independent point IDs, source settings and stable name", () => {
   const state = initialState(200, 100),
@@ -90,4 +91,57 @@ test("initial base width is 5% of the short edge, at least 10px, under the slide
   assert.equal(width(400, 100), 10);
   // Tiny images resolve in favor of the long-edge/10 slider cap.
   assert.equal(width(50, 40), 5);
+});
+test("rescaling to a new image keeps shape via uniform scale and centering", () => {
+  const state = initialState(200, 100),
+    s = activeStroke(state);
+  s.width = 20;
+  s.tension = 0.5;
+  s.points = [
+    { id: "a", x: 40, y: 20, factor: 2, source: { angle: 30, length: 40 } },
+    { id: "b", x: 120, y: 80, factor: 0.5, source: { angle: -90, length: 10 } },
+  ];
+  s.source = { x: 40, y: 20, angle: 45, length: 30 };
+  // Portrait target: scale = min(100/200, 200/100) = 0.5, centered vertically.
+  const next = rescaleDocument(
+    state,
+    { width: 200, height: 100 },
+    { width: 100, height: 200 },
+  );
+  const moved = activeStroke(next);
+  assert.deepEqual(
+    moved.points.map((p) => [p.x, p.y]),
+    [
+      [20, 85],
+      [60, 115],
+    ],
+  );
+  assert.equal(moved.width, 10);
+  assert.deepEqual(moved.source, { x: 20, y: 85, angle: 45, length: 15 });
+  assert.deepEqual(
+    moved.points.map((p) => [p.factor, p.source!.angle, p.source!.length]),
+    [
+      [2, 30, 20],
+      [0.5, -90, 5],
+    ],
+  );
+  assert.equal(moved.tension, 0.5);
+  // The same size is an identity transform.
+  assert.deepEqual(
+    rescaleDocument(
+      state,
+      { width: 200, height: 100 },
+      { width: 200, height: 100 },
+    ),
+    state,
+  );
+  // Width stays inside the new slider cap and lengths keep their 1px floor.
+  const tiny = rescaleDocument(
+    state,
+    { width: 200, height: 100 },
+    { width: 20, height: 10 },
+  );
+  assert.equal(activeStroke(tiny).width, 2);
+  assert.equal(activeStroke(tiny).source.length, 3);
+  assert.equal(activeStroke(tiny).points[1].source!.length, 1);
 });

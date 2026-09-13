@@ -276,6 +276,9 @@ test("editor, GPU replay, PNG output, image orientation and recovery", async ({
   });
   await ready(page);
   await expect(page.locator("#image-name")).toHaveText("transparent.png");
+  // Strokes carry over on image swap; clear them for clean pixel checks.
+  await page.locator("#clear").click();
+  await ready(page);
   await page.locator("#resolution").selectOption("original");
   await ready(page);
   const png = await download(page, "spline-smudge-transparent");
@@ -1152,4 +1155,84 @@ test("a present() during a rendering wait does not drop later strokes", async ({
   expect(result.undisturbed[1]).toEqual([0, 255, 0, 255]);
   expect(result.disturbed).toEqual(result.undisturbed);
   expect(result.glError).toBe(0);
+});
+
+test("loading a new image carries the composition over, rescaled and centered", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await page.locator("#clear").click();
+  await ready(page);
+  const rect = await page.locator("#art").boundingBox();
+  if (!rect) throw new Error("No image");
+  await page.mouse.click(rect.x + rect.width * 0.25, rect.y + rect.height * 0.5);
+  await ready(page);
+  await page.mouse.click(rect.x + rect.width * 0.75, rect.y + rect.height * 0.5);
+  await ready(page);
+  await page.locator("#width").fill("80");
+  await ready(page);
+  await page.locator("#angle").fill("30");
+  await ready(page);
+  // A hidden duplicate must survive the swap too.
+  await page.locator("#stroke-copy").click();
+  await ready(page);
+  const copyId = (await debug(page)).activeId;
+  await page.locator(`[data-visibility="${copyId}"]`).uncheck();
+  await ready(page);
+  const before = await debug(page);
+  // 1600×1100 → 160×100: scale = 100/1100, horizontally centered.
+  const scale = 100 / 1100,
+    offset = (160 - 1600 * scale) / 2;
+  await page.locator("#file").setInputFiles({
+    name: "swap.png",
+    mimeType: "image/png",
+    buffer: await fixture(page),
+  });
+  await ready(page);
+  const after = await debug(page);
+  expect(after.strokes.length).toBe(2);
+  expect(after.activeId).toBe(before.activeId);
+  after.strokes.forEach((stroke: any, i: number) => {
+    const old = before.strokes[i];
+    expect(stroke.name).toBe(old.name);
+    expect(stroke.visible).toBe(old.visible);
+    expect(stroke.width).toBe(Math.round(old.width * scale));
+    expect(stroke.source.angle).toBe(old.source.angle);
+    expect(stroke.source.length).toBeCloseTo(old.source.length * scale, 4);
+    stroke.points.forEach((p: any, j: number) => {
+      expect(p.x).toBeCloseTo(old.points[j].x * scale + offset, 4);
+      expect(p.y).toBeCloseTo(old.points[j].y * scale, 4);
+      expect(p.factor).toBe(old.points[j].factor);
+      expect(p.source.angle).toBe(old.points[j].source.angle);
+      expect(p.source.length).toBeCloseTo(old.points[j].source.length * scale, 4);
+    });
+  });
+  // The swap is not undoable; a preset long edge stays fixed.
+  await expect(page.locator("#undo")).toBeDisabled();
+  expect(after.longEdge).toBe(2000);
+  await expect(page.locator("#dimensions")).toHaveText("2000 × 1250 px");
+  // A failed load keeps the carried composition untouched.
+  await page.locator("#file").setInputFiles({
+    name: "broken.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("nope"),
+  });
+  await expect(page.locator("#status")).toContainText("JPGまたはPNG");
+  expect(await debug(page)).toEqual(after);
+  // "元画像と同じ" follows the size of the next image.
+  await page.locator("#resolution").selectOption("original");
+  await ready(page);
+  await page.locator("#file").setInputFiles({
+    name: "swap2.png",
+    mimeType: "image/png",
+    buffer: await fixture(page),
+  });
+  await ready(page);
+  expect((await debug(page)).longEdge).toBe(160);
+  await expect(page.locator("#dimensions")).toHaveText("160 × 100 px");
+  // Editing on the new photo starts a fresh history.
+  await page.locator("#width").fill("10");
+  await ready(page);
+  await expect(page.locator("#undo")).toBeEnabled();
 });
