@@ -1,4 +1,4 @@
-import type { DocumentState, Stroke } from "./model.ts";
+import type { BlendMode, DocumentState, Stroke } from "./model.ts";
 import { outputSize } from "./model.ts";
 import { sampleCurve } from "./geometry.ts";
 import { ribbonMesh, ribbonStride } from "./ribbon-mesh.ts";
@@ -52,7 +52,7 @@ gl_Position=vec4(pos/resolution*2.0-1.0,0,1);}`;
 const ribbonFragment = `#version 300 es
 precision highp float;
 in vec2 uvA; in vec2 uvB; in vec2 uv; in vec2 ribbonNormal;
-uniform sampler2D image; uniform bool perPoint; uniform float shadeAmount; out vec4 color;
+uniform sampler2D image; uniform bool perPoint; uniform float shadeAmount; uniform int edgeNeutral; out vec4 color;
 ${colorInterpolationGLSL}
 void main(){
 vec4 a=texture(image,uvA);
@@ -67,7 +67,12 @@ float specular=pow(max(dot(reflect(-L,N),vec3(0.0,0.0,1.0)),0.0),24.0);
 color.rgb=color.rgb*mix(1.0,0.35+0.85*diffuse,shadeAmount)+specular*0.5*shadeAmount;
 }
 float edge=max(fwidth(uv.x),0.00001);
-color.a*=smoothstep(0.0,edge,uv.x)*smoothstep(0.0,edge,1.0-uv.x);
+float fade=smoothstep(0.0,edge,uv.x)*smoothstep(0.0,edge,1.0-uv.x);
+// Alpha does not fade fixed-function multiply/screen/add/subtract, so those
+// modes fade the color toward their neutral value (white or black) instead.
+if(edgeNeutral==0)color.a*=fade;
+else if(edgeNeutral==1)color.rgb=mix(vec3(1.0),color.rgb,fade);
+else color.rgb*=fade;
 }`;
 const frame = () =>
   new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -87,6 +92,8 @@ export class Renderer {
   // False whenever another pass (e.g. present() during an await) may have
   // changed framebuffer, viewport, program, VAO, blend or texture state.
   private ribbonReady = false;
+  // The blend mode currently applied to the ribbon pipeline; undefined forces a re-apply.
+  private ribbonBlend?: BlendMode;
   width = 1;
   height = 1;
   ready = false;
@@ -325,6 +332,7 @@ export class Renderer {
         // A present() during the await below leaves foreign GPU state behind;
         // rebind the ribbon pipeline lazily so each stroke draws into working.
         if (!this.ribbonReady) this.ribbonSetup(state.mode === "B", setup);
+        this.applyBlend(stroke.blend ?? "normal");
         const verts = ribbonMesh(samples, scaled, state.mode);
         this.uploadRibbon(verts);
         g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
@@ -389,12 +397,8 @@ export class Renderer {
     g.useProgram(p.program);
     g.bindVertexArray(this.vao);
     g.enable(g.BLEND);
-    g.blendFuncSeparate(
-      g.SRC_ALPHA,
-      g.ONE_MINUS_SRC_ALPHA,
-      g.ONE,
-      g.ONE_MINUS_SRC_ALPHA,
-    );
+    // Blend state is stroke-dependent; force the next applyBlend to set it.
+    this.ribbonBlend = undefined;
     this.pair(p, "resolution", this.width, this.height);
     this.flag(p, "perPoint", perPoint);
     g.uniform1f(this.location(p, "displacePx"), options.displacePx);
@@ -405,6 +409,34 @@ export class Renderer {
     g.uniform1f(this.location(p, "mixSpin"), options.mixSpin);
     this.texture(p, "image", this.photo!.texture, 0);
     this.ribbonReady = true;
+  }
+  /** Fixed-function compositing per stroke. Destination alpha stays 1 in every
+   * mode. Non-normal modes tell the shader to fade edges toward the blend's
+   * neutral color, since alpha cannot fade them. */
+  private applyBlend(mode: BlendMode) {
+    if (this.ribbonBlend === mode) return;
+    const g = this.gl;
+    g.uniform1i(
+      this.location(this.ribbon, "edgeNeutral"),
+      mode === "normal" ? 0 : mode === "multiply" ? 1 : 2,
+    );
+    g.blendEquationSeparate(
+      mode === "subtract" ? g.FUNC_REVERSE_SUBTRACT : g.FUNC_ADD,
+      g.FUNC_ADD,
+    );
+    if (mode === "normal")
+      g.blendFuncSeparate(
+        g.SRC_ALPHA,
+        g.ONE_MINUS_SRC_ALPHA,
+        g.ONE,
+        g.ONE_MINUS_SRC_ALPHA,
+      );
+    else if (mode === "multiply")
+      g.blendFuncSeparate(g.DST_COLOR, g.ZERO, g.ZERO, g.ONE);
+    else if (mode === "screen")
+      g.blendFuncSeparate(g.ONE, g.ONE_MINUS_SRC_COLOR, g.ZERO, g.ONE);
+    else g.blendFuncSeparate(g.ONE, g.ONE, g.ZERO, g.ONE);
+    this.ribbonBlend = mode;
   }
   present(width: number, height: number) {
     if (!this.ready || !this.complete) return;

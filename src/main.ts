@@ -13,6 +13,8 @@ import {
   pointSource,
   rescaleDocument,
   reactionModes,
+  blendModes,
+  type BlendMode,
   mixModes,
   type MixMode,
   type SourceSettings,
@@ -49,7 +51,13 @@ document.querySelector("#app")!.innerHTML = `
   .map(([key, label]) => `<option value="${key}">${label}</option>`)
   .join(
     "",
-  )}</select><div id="stroke-list" class="stroke-list" aria-label="ストローク一覧"></div><div class="stroke-actions"><button id="stroke-add">＋ 追加</button><button id="stroke-copy">複製</button><button id="stroke-delete">削除</button><button id="stroke-up" title="手前へ" aria-label="線を手前へ">↑</button><button id="stroke-down" title="奥へ" aria-label="線を奥へ">↓</button></div><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 160, 1)}<div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}<button id="factor-reset" class="factor-reset">1.00× に戻す</button></div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">点をクリア</button></div></section>
+  )}</select><div id="stroke-list" class="stroke-list" aria-label="ストローク一覧"></div><div class="stroke-actions"><button id="stroke-add">＋ 追加</button><button id="stroke-copy">複製</button><button id="stroke-delete">削除</button><button id="stroke-up" title="手前へ" aria-label="線を手前へ">↑</button><button id="stroke-down" title="奥へ" aria-label="線を奥へ">↓</button></div><label class="range-label" for="blend">選択した線の合成</label><select id="blend">${Object.entries(
+  blendModes,
+)
+  .map(([key, label]) => `<option value="${key}">${label}</option>`)
+  .join(
+    "",
+  )}</select><div id="tcb">${range("tension", "Tension / 張り", -1, 1, 0.01)}${range("continuity", "Continuity / つながり", -1, 1, 0.01)}${range("bias", "Bias / 偏り", -1, 1, 0.01)}</div>${range("width", "基本の太さ", 1, 160, 1)}<div class="selected"><span id="selected-name">点を選択してください</span>${range("factor", "この点の太さ", 0, 10, 0.05)}<button id="factor-reset" class="factor-reset">1.00× に戻す</button></div><div class="button-row"><button id="sample">ランダムな曲線</button><button id="clear">点をクリア</button></div></section>
 <section><div class="section-title">03 <h2>採取線</h2></div><div id="source-selected" class="source-selected"></div>${range("angle", "角度", -180, 180, 1)}${range("source-length", "採取する長さ", 1, 1600, 1)}</section>
 <section><div class="section-title">04 <h2>オプション</h2></div><label class="option-toggle"><input id="reaction" type="checkbox">写真で帯を変形</label><div id="reaction-settings" class="option-settings" hidden><label class="sr-only" for="reaction-mode">変形アルゴリズム</label><select id="reaction-mode">${Object.entries(
   reactionModes,
@@ -129,6 +137,7 @@ function sync() {
     strokeIndex === state.strokes.length - 1;
   $<HTMLButtonElement>("stroke-down").disabled = strokeIndex === 0;
   $<HTMLSelectElement>("kind").value = state.kind;
+  $<HTMLSelectElement>("blend").value = stroke().blend;
   $("mode-a").setAttribute("aria-pressed", String(state.mode === "A"));
   $("mode-b").setAttribute("aria-pressed", String(state.mode === "B"));
   const source = currentSource();
@@ -474,6 +483,10 @@ for (const [id, apply] of Object.entries({
 }))
   $<HTMLInputElement>(id).onchange = () =>
     edit(() => apply($<HTMLInputElement>(id).checked));
+$("blend").onchange = () =>
+  edit(
+    () => (stroke().blend = $<HTMLSelectElement>("blend").value as BlendMode),
+  );
 $("mix-mode").onchange = () =>
   edit(
     () =>

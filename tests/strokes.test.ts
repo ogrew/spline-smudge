@@ -145,3 +145,20 @@ test("rescaling to a new image keeps shape via uniform scale and centering", () 
   assert.equal(activeStroke(tiny).source.length, 3);
   assert.equal(activeStroke(tiny).points[1].source!.length, 1);
 });
+test("blend mode is per stroke, copied by duplicates, kept through rescale", () => {
+  const state = initialState(200, 100);
+  activeStroke(state).blend = "multiply";
+  const copy = addStroke(state, true);
+  assert.equal(copy.blend, "multiply");
+  copy.blend = "screen";
+  assert.equal(state.strokes[0].blend, "multiply");
+  const rescaled = rescaleDocument(
+    state,
+    { width: 200, height: 100 },
+    { width: 100, height: 50 },
+  );
+  assert.deepEqual(
+    rescaled.strokes.map((s) => s.blend),
+    ["multiply", "screen"],
+  );
+});

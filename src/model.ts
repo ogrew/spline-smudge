@@ -13,6 +13,16 @@ export const kinds: Record<Kind, string> = {
   natural: "Natural cubic",
   tcb: "Kochanek–Bartels / TCB",
 };
+/** Per-stroke compositing onto the photo and the strokes below.
+ * Everything but "normal" also blends a stroke's self-intersections. */
+export type BlendMode = "normal" | "multiply" | "screen" | "add" | "subtract";
+export const blendModes: Record<BlendMode, string> = {
+  normal: "通常",
+  multiply: "乗算",
+  screen: "スクリーン",
+  add: "加算",
+  subtract: "減算",
+};
 export type Stroke = {
   id: string;
   name: string;
@@ -22,6 +32,7 @@ export type Stroke = {
   tension: number;
   continuity: number;
   bias: number;
+  blend: BlendMode;
   source: Vec & { angle: number; length: number };
 };
 /** B-mode color interpolation between adjacent source lines.
@@ -105,6 +116,7 @@ export function initialState(width: number, height: number): DocumentState {
         tension: 0,
         continuity: 0,
         bias: 0,
+        blend: "normal",
         source: {
           x: width * 0.2,
           y: height * 0.65,

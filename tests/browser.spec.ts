@@ -1236,3 +1236,108 @@ test("loading a new image carries the composition over, rescaled and centered", 
   await ready(page);
   await expect(page.locator("#undo")).toBeEnabled();
 });
+
+test("stroke blend modes composite with the photo as documented", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    const { Renderer } = await import("/src/renderer.ts");
+    const { initialState, activeStroke } = await import("/src/model.ts");
+    const image = document.createElement("canvas");
+    image.width = 200;
+    image.height = 150;
+    const x = image.getContext("2d")!;
+    x.fillStyle = "#808080";
+    x.fillRect(0, 0, 200, 150);
+    x.fillStyle = "#ff8000";
+    x.fillRect(0, 0, 200, 20);
+    const renderer = new Renderer(document.createElement("canvas"));
+    const state = initialState(200, 150);
+    state.longEdge = 200;
+    const stroke = activeStroke(state);
+    stroke.width = 20;
+    stroke.points = [
+      { id: "a", x: 20, y: 75, factor: 1 },
+      { id: "b", x: 180, y: 75, factor: 1 },
+    ];
+    stroke.source = { x: 100, y: 10, angle: 0, length: 1 };
+    const out: Record<string, number[][]> = {};
+    for (const mode of [
+      "normal",
+      "multiply",
+      "screen",
+      "add",
+      "subtract",
+    ] as const) {
+      stroke.blend = mode;
+      await renderer.render(image, 200, 150, state, () => false, () => {});
+      const bitmap = await createImageBitmap(await renderer.exportPNG());
+      const c = document.createElement("canvas");
+      c.width = 200;
+      c.height = 150;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(bitmap, 0, 0);
+      out[mode] = [
+        [100, 75],
+        [100, 120],
+      ].map(([px, py]) => Array.from(ctx.getImageData(px, py, 1, 1).data));
+      bitmap.close();
+    }
+    const glError = renderer.gl.getError();
+    renderer.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return { out, glError };
+  });
+  // #ff8000 stroke over a #808080 photo, blending on encoded sRGB values.
+  const expected: Record<string, number[]> = {
+    normal: [255, 128, 0, 255],
+    multiply: [128, 64, 0, 255],
+    screen: [255, 192, 128, 255],
+    add: [255, 255, 128, 255],
+    subtract: [0, 0, 128, 255],
+  };
+  for (const [mode, inside] of Object.entries(expected)) {
+    result.out[mode][0].forEach((channel: number, i: number) =>
+      expect(Math.abs(channel - inside[i])).toBeLessThanOrEqual(3),
+    );
+    // Outside the ribbon the photo is untouched in every mode.
+    expect(result.out[mode][1]).toEqual([128, 128, 128, 255]);
+  }
+  expect(result.glError).toBe(0);
+});
+
+test("blend select is per stroke, carried by duplicates and undoable", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await expect(page.locator("#blend")).toHaveValue("normal");
+  const baseline = await download(page, "spline-smudge-blend-baseline");
+  await page.locator("#blend").selectOption("screen");
+  await ready(page);
+  expect((await debug(page)).strokes[0].blend).toBe("screen");
+  const screened = await download(page, "spline-smudge-blend-screen");
+  expect(screened.bytes.equals(baseline.bytes)).toBe(false);
+  // Duplicates inherit the blend; changing the copy leaves the original alone.
+  await page.locator("#stroke-copy").click();
+  await ready(page);
+  await expect(page.locator("#blend")).toHaveValue("screen");
+  await page.locator("#blend").selectOption("add");
+  await ready(page);
+  let strokes = (await debug(page)).strokes;
+  expect(strokes.map((s: any) => s.blend)).toEqual(["screen", "add"]);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[1].blend).toBe("screen");
+  // Selecting the original shows its own mode; back to normal restores pixels.
+  const firstId = (await debug(page)).strokes[0].id;
+  await page.locator(`[data-select-stroke="${firstId}"]`).click();
+  await expect(page.locator("#blend")).toHaveValue("screen");
+  await page.locator("#stroke-delete").click();
+  await ready(page);
+  await page.locator("#blend").selectOption("normal");
+  await ready(page);
+  const restored = await download(page, "spline-smudge-blend-restored");
+  expect(restored.bytes.equals(baseline.bytes)).toBe(true);
+});
