@@ -15,6 +15,10 @@ type Program = {
   program: WebGLProgram;
   uniforms: Map<string, WebGLUniformLocation | null>;
 };
+/** Yield to the browser after this much uninterrupted stroke compositing. */
+const FRAME_BUDGET_MS = 8;
+/** Luminance-difference offset for edge strength, in source-image px. */
+const EDGE_SAMPLE_SOURCE_PX = 3;
 const fullVertex = `#version 300 es
 precision highp float;
 out vec2 uv;
@@ -37,14 +41,16 @@ uniform float displacePx;
 uniform float edgeAmount;
 uniform float edgeTexel;
 out vec2 uvA; out vec2 uvB; out vec2 uv; out vec2 ribbonNormal;
+const float EDGE_GAIN=3.0;      // luminance gradient to edge strength
+const float WIDTH_SCALE_MAX=3.0;
 float lum(vec2 p){vec3 c=texture(image,p/resolution).rgb;return dot(c,vec3(0.2126,0.7152,0.0722));}
 void main(){
 uv=strip;uvA=sourceA/resolution;uvB=sourceB/resolution;ribbonNormal=normal;
 float widthScale=1.0;
 if(edgeAmount!=0.0){
 vec2 dx=vec2(edgeTexel,0.0),dy=vec2(0.0,edgeTexel);
-float e=clamp(length(vec2(lum(center+dx)-lum(center-dx),lum(center+dy)-lum(center-dy)))*3.0,0.0,1.0);
-widthScale=clamp(1.0+edgeAmount*(e*2.0-1.0),0.0,3.0);
+float e=clamp(length(vec2(lum(center+dx)-lum(center-dx),lum(center+dy)-lum(center-dy)))*EDGE_GAIN,0.0,1.0);
+widthScale=clamp(1.0+edgeAmount*(e*2.0-1.0),0.0,WIDTH_SCALE_MAX);
 }
 vec2 pos=center+normal*(misc.x*widthScale);
 if(displacePx!=0.0)pos+=normal*((lum(center)-0.5)*2.0*displacePx);
@@ -54,17 +60,23 @@ precision highp float;
 in vec2 uvA; in vec2 uvB; in vec2 uv; in vec2 ribbonNormal;
 uniform sampler2D image; uniform bool perPoint; uniform float shadeAmount; out vec4 color;
 ${colorInterpolationGLSL}
+// Fake-3D shading: cylinder-profile pseudo normal, fixed upper-left light.
+const float ROUNDNESS=0.85;     // cross-section tilt of the pseudo normal
+const float ROUNDNESS2=0.7225;  // ROUNDNESS squared, literal to keep pixels exact
+const float SHADE_AMBIENT=0.35;
+const float SHADE_DIFFUSE=0.85;
+const float SHADE_GLOSS=24.0;
+const float SHADE_SPECULAR=0.5;
 void main(){
 vec4 a=texture(image,uvA);
 color=perPoint?interpolateColor(a,texture(image,uvB),uv.y):a;
 if(shadeAmount>0.0){
-// Cylinder-profile pseudo normal across the band; light from the upper left in image space.
 float t=uv.x*2.0-1.0;
-vec3 N=normalize(vec3(normalize(ribbonNormal)*t*0.85,sqrt(max(0.02,1.0-0.7225*t*t))));
+vec3 N=normalize(vec3(normalize(ribbonNormal)*t*ROUNDNESS,sqrt(max(0.02,1.0-ROUNDNESS2*t*t))));
 vec3 L=normalize(vec3(-0.45,-0.6,0.66));
 float diffuse=max(dot(N,L),0.0);
-float specular=pow(max(dot(reflect(-L,N),vec3(0.0,0.0,1.0)),0.0),24.0);
-color.rgb=color.rgb*mix(1.0,0.35+0.85*diffuse,shadeAmount)+specular*0.5*shadeAmount;
+float specular=pow(max(dot(reflect(-L,N),vec3(0.0,0.0,1.0)),0.0),SHADE_GLOSS);
+color.rgb=color.rgb*mix(1.0,SHADE_AMBIENT+SHADE_DIFFUSE*diffuse,shadeAmount)+specular*SHADE_SPECULAR*shadeAmount;
 }
 float edge=max(fwidth(uv.x),0.00001);
 color.a*=smoothstep(0.0,edge,uv.x)*smoothstep(0.0,edge,1.0-uv.x);
@@ -288,7 +300,7 @@ export class Renderer {
           : 0,
       edgeAmount:
         reaction.on && reaction.mode === "edgeWidth" ? reaction.edgeAmount : 0,
-      edgeTexel: 3 * scale,
+      edgeTexel: EDGE_SAMPLE_SOURCE_PX * scale,
       shadeAmount: shade.on ? shade.amount : 0,
       mixMode: mixModeIndex[state.mix.mode],
       // Whole turns only: the endpoints of every interval keep their sampled color.
@@ -330,7 +342,7 @@ export class Renderer {
         g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
       }
       progress((index + 1) / Math.max(1, strokes.length));
-      if (performance.now() - chunk > 8) {
+      if (performance.now() - chunk > FRAME_BUDGET_MS) {
         await frame();
         chunk = performance.now();
       }

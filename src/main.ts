@@ -12,6 +12,7 @@ import {
   outputSize,
   pointSource,
   rescaleDocument,
+  widthCap,
   reactionModes,
   mixModes,
   type MixMode,
@@ -26,6 +27,17 @@ import { RenderQueue } from "./render-queue.ts";
 import { appTemplate } from "./ui-template.ts";
 
 const presetEdges = [2000, 3508, 5000];
+/** Layout and interaction tuning. All values are in CSS px or ms. */
+const FIT_MARGIN_X = 96; // stage padding around a fitted image
+const FIT_MARGIN_Y = 100;
+const HIT_RADIUS = 11; // control-point hit radius
+const ZOOM_MIN = 0.02;
+const ZOOM_MAX = 8;
+const ZOOM_STEP = 1.25; // the +/- buttons
+const WHEEL_ZOOM_RATE = 0.001; // exponent slope per wheel delta unit
+const WHEEL_UNITS_PER_DEGREE = 12; // Shift+wheel: delta units per degree of angle
+const WHEEL_BURST_MS = 400; // wheel events closer than this share one undo entry
+const ADD_CANCEL_MS = 750; // a blank double click can still cancel the added point
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -170,9 +182,7 @@ function sync() {
   $("reaction-displace").hidden = options().reaction.mode !== "displace";
   $("reaction-edge").hidden = options().reaction.mode !== "edgeWidth";
   $("shade-settings").hidden = !options().shade.on;
-  $<HTMLInputElement>("width").max = String(
-    Math.max(1, Math.floor(Math.max(iw, ih) / 10)),
-  );
+  $<HTMLInputElement>("width").max = String(widthCap(iw, ih));
   $<HTMLInputElement>("source-length").max = String(
     Math.ceil(Math.hypot(iw, ih)),
   );
@@ -278,8 +288,8 @@ function layout() {
     s = size();
   if (fitted) {
     zoom = Math.min(
-      (rect.width - 96) / s.width,
-      (rect.height - 100) / s.height,
+      (rect.width - FIT_MARGIN_X) / s.width,
+      (rect.height - FIT_MARGIN_Y) / s.height,
     );
     pan = { x: 0, y: 0 };
   }
@@ -390,10 +400,7 @@ $("kind").onchange = () =>
   edit(() => (state.kind = $<HTMLSelectElement>("kind").value as Kind));
 const changes: Record<string, (v: number) => void> = {
   width: (v) =>
-    (stroke().width = Math.max(
-      1,
-      Math.min(Math.round(v), Math.max(1, Math.floor(Math.max(iw, ih) / 10))),
-    )),
+    (stroke().width = Math.max(1, Math.min(Math.round(v), widthCap(iw, ih)))),
   factor: (v) => {
     if (point()) point()!.factor = v;
   },
@@ -552,7 +559,7 @@ function zoomBy(factor: number, anchor?: { clientX: number; clientY: number }) {
       }
     : null;
   fitted = false;
-  zoom = Math.max(0.02, Math.min(8, zoom * factor));
+  zoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom * factor));
   if (anchor && relative) {
     const s = size(),
       width = s.width * zoom,
@@ -572,8 +579,8 @@ function zoomBy(factor: number, anchor?: { clientX: number; clientY: number }) {
   }
   layout();
 }
-$("plus").onclick = () => zoomBy(1.25);
-$("minus").onclick = () => zoomBy(0.8);
+$("plus").onclick = () => zoomBy(ZOOM_STEP);
+$("minus").onclick = () => zoomBy(1 / ZOOM_STEP);
 let wheel = { key: "", time: 0, generation: -1, remainder: 0 };
 $("stage").addEventListener(
   "wheel",
@@ -591,7 +598,7 @@ $("stage").addEventListener(
         key = `wheel:${state.activeId}:${selected}:${state.mode}`;
       if (
         key !== wheel.key ||
-        now - wheel.time > 400 ||
+        now - wheel.time > WHEEL_BURST_MS ||
         wheel.generation !== gestures.generation
       ) {
         // A fresh burst gets its own undo entry even if the gesture is live.
@@ -606,7 +613,7 @@ $("stage").addEventListener(
           : event.deltaMode === 2
             ? $("stage").clientHeight
             : 1);
-      wheel.remainder -= delta / 12;
+      wheel.remainder -= delta / WHEEL_UNITS_PER_DEGREE;
       const steps = Math.trunc(wheel.remainder);
       wheel.time = now;
       if (!steps) return;
@@ -623,7 +630,7 @@ $("stage").addEventListener(
       return;
     }
     wheel = { key: "", time: 0, generation: -1, remainder: 0 };
-    zoomBy(Math.exp(-event.deltaY * 0.001), event);
+    zoomBy(Math.exp(-event.deltaY * WHEEL_ZOOM_RATE), event);
   },
   { passive: false },
 );
@@ -638,7 +645,7 @@ const inside = (p: { x: number; y: number }) =>
   p.x >= 0 && p.y >= 0 && p.x <= iw && p.y <= ih;
 const nearest = (p: { x: number; y: number }) => {
   // Closest hit inside an 11 CSS px radius; the earlier point wins exact ties.
-  let bestDistance = 11 / ((size().width / iw) * zoom);
+  let bestDistance = HIT_RADIUS / ((size().width / iw) * zoom);
   let best: (typeof state.strokes)[number]["points"][number] | undefined;
   for (const q of stroke().points) {
     const distance = Math.hypot(q.x - p.x, q.y - p.y);
@@ -745,7 +752,12 @@ $("stage").addEventListener("dblclick", (event) => {
   if (exporting || !stroke().visible) return;
   const p = nearest(coordinate(event)),
     added = clickAddedPoint;
-  if (p && added && p.id === added.id && performance.now() - added.time < 750) {
+  if (
+    p &&
+    added &&
+    p.id === added.id &&
+    performance.now() - added.time < ADD_CANCEL_MS
+  ) {
     state = history.discardLatestPush() ?? state;
     selected = added.previousSelection;
     clickAddedPoint = null;

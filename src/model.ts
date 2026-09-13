@@ -1,3 +1,12 @@
+/** Snapshots kept for undo. */
+const HISTORY_LIMIT = 80;
+/** Initial base width: this share of the short edge, but at least the floor. */
+const INITIAL_WIDTH_RATIO = 0.05;
+const INITIAL_WIDTH_FLOOR = 10;
+/** The base-width slider maximum for an image: a tenth of the long edge. */
+export const widthCap = (width: number, height: number) =>
+  Math.max(1, Math.floor(Math.max(width, height) / 10));
+
 export type Vec = { x: number; y: number };
 export type SourceSettings = { angle: number; length: number };
 export type Point = Vec & {
@@ -93,14 +102,13 @@ export function initialState(width: number, height: number): DocumentState {
         name: "Stroke 01",
         visible: true,
         points: [],
-        // 5% of the short edge but at least 10px, kept under the slider cap of
-        // a tenth of the long edge (tiny images resolve in the cap's favor).
-        width: Math.max(
-          1,
-          Math.min(
-            Math.max(10, Math.round(Math.min(width, height) * 0.05)),
-            Math.floor(Math.max(width, height) / 10),
+        // Tiny images resolve in the slider cap's favor.
+        width: Math.min(
+          Math.max(
+            INITIAL_WIDTH_FLOOR,
+            Math.round(Math.min(width, height) * INITIAL_WIDTH_RATIO),
           ),
+          widthCap(width, height),
         ),
         tension: 0,
         continuity: 0,
@@ -133,7 +141,7 @@ export class History {
   }
   push(state: DocumentState) {
     this.past.push(structuredClone(state));
-    if (this.past.length > 80) this.past.shift();
+    if (this.past.length > HISTORY_LIMIT) this.past.shift();
     this.futureBeforePush = this.future;
     this.future = [];
   }
@@ -222,13 +230,10 @@ export function rescaleDocument(
   const s = Math.min(to.width / from.width, to.height / from.height);
   const dx = (to.width - from.width * s) / 2,
     dy = (to.height - from.height * s) / 2;
-  const widthCap = Math.max(1, Math.floor(Math.max(to.width, to.height) / 10));
+  const cap = widthCap(to.width, to.height);
   const next = structuredClone(state);
   for (const stroke of next.strokes) {
-    stroke.width = Math.max(
-      1,
-      Math.min(Math.round(stroke.width * s), widthCap),
-    );
+    stroke.width = Math.max(1, Math.min(Math.round(stroke.width * s), cap));
     stroke.source.x = stroke.source.x * s + dx;
     stroke.source.y = stroke.source.y * s + dy;
     stroke.source.length = Math.max(1, stroke.source.length * s);
