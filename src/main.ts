@@ -11,6 +11,7 @@ import {
   kinds,
   outputSize,
   pointSource,
+  rescaleDocument,
   reactionModes,
   mixModes,
   type MixMode,
@@ -20,6 +21,8 @@ import {
   type ReactionMode,
 } from "./model.ts";
 import { sampleCurve, randomizeWidthsByCorner } from "./geometry.ts";
+
+const presetEdges = [2000, 3508, 5000];
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -189,7 +192,7 @@ function sync() {
   $<HTMLButtonElement>("undo").disabled = !history.canUndo || exporting;
   $<HTMLButtonElement>("redo").disabled = !history.canRedo || exporting;
   $<HTMLInputElement>("background").value = state.background;
-  $<HTMLSelectElement>("resolution").value = [2000, 3508, 5000].includes(
+  $<HTMLSelectElement>("resolution").value = presetEdges.includes(
     state.longEdge,
   )
     ? String(state.longEdge)
@@ -896,10 +899,20 @@ $<HTMLInputElement>("file").onchange = async () => {
     sourceBitmap = bitmap;
     source = bitmap;
     originalFile = file;
+    // Carry the whole composition over: one uniform fit scale, centered.
+    // Only a successful decode reaches this point; failures keep everything.
+    const fixedEdge = presetEdges.includes(state.longEdge);
+    state = rescaleDocument(
+      state,
+      { width: iw, height: ih },
+      { width: bitmap.width, height: bitmap.height },
+    );
     iw = bitmap.width;
     ih = bitmap.height;
-    state = initialState(iw, ih);
-    selected = null;
+    // A preset long edge stays; "元画像と同じ" follows the new image.
+    if (!fixedEdge) state.longEdge = Math.max(iw, ih);
+    if (!point()) selected = null;
+    // The swap itself is not undoable; editing history restarts on the new photo.
     history.clear();
     fitted = true;
     pan = { x: 0, y: 0 };

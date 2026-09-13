@@ -208,3 +208,36 @@ export function moveStroke(state: DocumentState, direction: -1 | 1) {
 export function exportKind(state: DocumentState) {
   return state.kind;
 }
+
+/** Fit the whole document into a new image size: one uniform scale for every
+ * stroke (the old frame fits inside the new one) plus centering, so curve
+ * shapes and the relationships between strokes are preserved. Widths and
+ * source-line lengths scale with the same factor; angles, per-point factors,
+ * modes and other settings stay. longEdge is left to the caller. */
+export function rescaleDocument(
+  state: DocumentState,
+  from: { width: number; height: number },
+  to: { width: number; height: number },
+): DocumentState {
+  const s = Math.min(to.width / from.width, to.height / from.height);
+  const dx = (to.width - from.width * s) / 2,
+    dy = (to.height - from.height * s) / 2;
+  const widthCap = Math.max(1, Math.floor(Math.max(to.width, to.height) / 10));
+  const next = structuredClone(state);
+  for (const stroke of next.strokes) {
+    stroke.width = Math.max(
+      1,
+      Math.min(Math.round(stroke.width * s), widthCap),
+    );
+    stroke.source.x = stroke.source.x * s + dx;
+    stroke.source.y = stroke.source.y * s + dy;
+    stroke.source.length = Math.max(1, stroke.source.length * s);
+    for (const point of stroke.points) {
+      point.x = point.x * s + dx;
+      point.y = point.y * s + dy;
+      if (point.source)
+        point.source.length = Math.max(1, point.source.length * s);
+    }
+  }
+  return next;
+}
