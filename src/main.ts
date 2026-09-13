@@ -21,6 +21,7 @@ import {
   type ReactionMode,
 } from "./model.ts";
 import { sampleCurve, randomizeWidthsByCorner } from "./geometry.ts";
+import { Gestures } from "./gestures.ts";
 import { RenderQueue } from "./render-queue.ts";
 import { appTemplate } from "./ui-template.ts";
 
@@ -59,6 +60,10 @@ let overlaySampleCache: {
 } | null = null;
 let overlaySampleComputations = 0;
 const history = new History();
+// Every push voids the pending "double click cancels the just-added point" window.
+const gestures = new Gestures(history, () => {
+  clickAddedPoint = null;
+});
 const queue = new RenderQueue<DocumentState>({
   snapshot: () => structuredClone(state),
   begin: () => {
@@ -308,9 +313,7 @@ function requestRender() {
 }
 function edit(change: () => void) {
   if (exporting) return;
-  // Any other edit ends the "double click cancels the just-added point" window.
-  clickAddedPoint = null;
-  history.push(state);
+  gestures.commit(state);
   change();
   requestRender();
 }
@@ -435,25 +438,18 @@ $("reaction-mode").onchange = () =>
         .value as ReactionMode),
   );
 for (const [id, change] of Object.entries(changes)) {
-  const input = $<HTMLInputElement>(id);
-  let checkpoint = false;
+  const input = $<HTMLInputElement>(id),
+    key = `slider:${id}`;
   input.addEventListener("input", () => {
     const beforeValue = currentValues[id](),
-      before = checkpoint ? null : structuredClone(state);
+      before = gestures.live(key) ? null : structuredClone(state);
     change(Number(input.value));
     if (currentValues[id]() === beforeValue) return;
-    if (!checkpoint) {
-      history.push(before!);
-      checkpoint = true;
-    }
+    gestures.checkpoint(key, before ?? state);
     requestRender();
   });
-  input.addEventListener("change", () => {
-    checkpoint = false;
-  });
-  input.addEventListener("blur", () => {
-    checkpoint = false;
-  });
+  for (const done of ["change", "blur"] as const)
+    input.addEventListener(done, () => gestures.end());
 }
 $("resolution").onchange = () =>
   edit(() => {
@@ -518,6 +514,7 @@ $("clear").onclick = () =>
   });
 $("undo").onclick = () => {
   if (exporting) return;
+  gestures.end();
   state = history.undo(state);
   if (!point()) selected = null;
   requestRender();
@@ -525,6 +522,7 @@ $("undo").onclick = () => {
 };
 $("redo").onclick = () => {
   if (exporting) return;
+  gestures.end();
   state = history.redo(state);
   if (!point()) selected = null;
   requestRender();
@@ -576,13 +574,7 @@ function zoomBy(factor: number, anchor?: { clientX: number; clientY: number }) {
 }
 $("plus").onclick = () => zoomBy(1.25);
 $("minus").onclick = () => zoomBy(0.8);
-let angleWheel = {
-  key: "",
-  time: 0,
-  revision: -1,
-  remainder: 0,
-  checkpoint: false,
-};
+let wheel = { key: "", time: 0, generation: -1, remainder: 0 };
 $("stage").addEventListener(
   "wheel",
   (event) => {
@@ -596,19 +588,16 @@ $("stage").addEventListener(
       )
         return;
       const now = performance.now(),
-        key = `${state.activeId}:${selected}:${state.mode}`;
+        key = `wheel:${state.activeId}:${selected}:${state.mode}`;
       if (
-        key !== angleWheel.key ||
-        now - angleWheel.time > 400 ||
-        angleWheel.revision !== queue.revision
-      )
-        angleWheel = {
-          key,
-          time: now,
-          revision: queue.revision,
-          remainder: 0,
-          checkpoint: false,
-        };
+        key !== wheel.key ||
+        now - wheel.time > 400 ||
+        wheel.generation !== gestures.generation
+      ) {
+        // A fresh burst gets its own undo entry even if the gesture is live.
+        if (gestures.live(key)) gestures.end();
+        wheel = { key, time: now, generation: gestures.generation, remainder: 0 };
+      }
       // Some browsers map Shift + a vertical wheel to deltaX.
       const delta =
         (event.deltaY || event.deltaX) *
@@ -617,15 +606,12 @@ $("stage").addEventListener(
           : event.deltaMode === 2
             ? $("stage").clientHeight
             : 1);
-      angleWheel.remainder -= delta / 12;
-      const steps = Math.trunc(angleWheel.remainder);
-      angleWheel.time = now;
+      wheel.remainder -= delta / 12;
+      const steps = Math.trunc(wheel.remainder);
+      wheel.time = now;
       if (!steps) return;
-      angleWheel.remainder -= steps;
-      if (!angleWheel.checkpoint) {
-        history.push(state);
-        angleWheel.checkpoint = true;
-      }
+      wheel.remainder -= steps;
+      gestures.checkpoint(key, state);
       updateSource(
         "angle",
         ((((Math.round(currentSource().angle) + steps + 180) % 360) + 360) %
@@ -633,11 +619,10 @@ $("stage").addEventListener(
           180,
       );
       requestRender();
-      angleWheel.revision = queue.revision;
+      wheel.generation = gestures.generation;
       return;
     }
-    angleWheel.checkpoint = false;
-    angleWheel.revision = -1;
+    wheel = { key: "", time: 0, generation: -1, remainder: 0 };
     zoomBy(Math.exp(-event.deltaY * 0.001), event);
   },
   { passive: false },
@@ -667,10 +652,11 @@ const nearest = (p: { x: number; y: number }) => {
 let drag: null | {
   type: "point" | "pan";
   id?: string;
-  checkpoint?: boolean;
+  key?: string;
   start: { x: number; y: number };
   pan: { x: number; y: number };
 } = null;
+let dragSequence = 0;
 let clickAddedPoint: {
   id: string;
   time: number;
@@ -694,14 +680,14 @@ $("stage").addEventListener("pointerdown", (event) => {
       drag = {
         type: "point",
         id: existing.id,
+        key: `drag:${++dragSequence}`,
         start: p,
         pan,
-        checkpoint: false,
       };
       sync();
     } else if (inside(p) && event.detail < 2) {
       const previousSelection = selected;
-      history.push(state);
+      gestures.commit(state);
       const added = {
         ...p,
         id: crypto.randomUUID(),
@@ -744,13 +730,7 @@ $("stage").addEventListener("pointermove", (event) => {
   if (drag.type === "point") {
     const q = stroke().points.find((q) => q.id === drag!.id);
     if (q && (q.x !== p.x || q.y !== p.y)) {
-      if (!drag.checkpoint) {
-        // Moving a point is an edit too; it must not be discarded by a later
-        // double click that still remembers a recently added point.
-        clickAddedPoint = null;
-        history.push(state);
-        drag.checkpoint = true;
-      }
+      gestures.checkpoint(drag.key!, state);
       q.x = p.x;
       q.y = p.y;
     }
@@ -859,6 +839,7 @@ $<HTMLInputElement>("file").onchange = async () => {
     if (!point()) selected = null;
     // The swap itself is not undoable; editing history restarts on the new photo.
     history.clear();
+    gestures.end();
     fitted = true;
     pan = { x: 0, y: 0 };
     $("image-name").textContent = file.name;
