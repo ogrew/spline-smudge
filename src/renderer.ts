@@ -330,6 +330,15 @@ export class Renderer {
           y: stroke.source.y * scale,
           length: stroke.source.length * scale,
         },
+        path: {
+          ...stroke.path,
+          start: {
+            x: stroke.path.start.x * scale,
+            y: stroke.path.start.y * scale,
+          },
+          end: { x: stroke.path.end.x * scale, y: stroke.path.end.y * scale },
+          length: stroke.path.length * scale,
+        },
       };
       // Sample in source-image distance so zoom does not change the mesh.
       const samples = sampleCurve(scaled, Math.max(0.5, 2 * scale), state.kind);

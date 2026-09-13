@@ -13,6 +13,7 @@ import {
   pointSource,
   rescaleDocument,
   widthCap,
+  pathPresets,
   reactionModes,
   mixModes,
   type MixMode,
@@ -109,9 +110,12 @@ const point = () => stroke().points.find((p) => p.id === selected);
 const currentSource = () =>
   state.mode === "B" && point()
     ? pointSource(stroke(), point()!)
-    : stroke().source;
+    : state.mode === "C"
+      ? stroke().path
+      : stroke().source;
 function updateSource(key: keyof SourceSettings, value: number) {
   if (state.mode === "A") stroke().source[key] = value;
+  else if (state.mode === "C") stroke().path[key] = value;
   else if (point()) {
     const source = pointSource(stroke(), point()!);
     point()!.source = {
@@ -140,11 +144,15 @@ function sync() {
   $<HTMLSelectElement>("kind").value = state.kind;
   $("mode-a").setAttribute("aria-pressed", String(state.mode === "A"));
   $("mode-b").setAttribute("aria-pressed", String(state.mode === "B"));
+  $("mode-c").setAttribute("aria-pressed", String(state.mode === "C"));
+  $("path-presets").hidden = state.mode !== "C";
   const source = currentSource();
   $("source-selected").textContent =
     state.mode === "A"
       ? "始点の採取線 · A"
-      : point()
+      : state.mode === "C"
+        ? "採取経路 · C（端点をドラッグで移動）"
+        : point()
         ? `POINT ${String(stroke().points.indexOf(point()!) + 1).padStart(2, "0")} の採取線 · B`
         : "編集する点を選択してください";
   for (const id of ["angle", "source-length"])
@@ -243,8 +251,42 @@ function overlay() {
     parts.push(
       `<polyline class="centerline" points="${sampled.map((p) => `${p.x},${p.y}`).join(" ")}"/>`,
     );
+    if (state.mode === "C") {
+      // The sampling path with draggable endpoints; small markers show each
+      // progression key on the photo (where) and on the band (when).
+      const path = stroke().path,
+        direction = {
+          x: path.end.x - path.start.x,
+          y: path.end.y - path.start.y,
+        },
+        total = sampled.length ? sampled[sampled.length - 1].distance : 0;
+      parts.push(
+        `<g class="source-guide"><line class="source-line" x1="${path.start.x}" y1="${path.start.y}" x2="${path.end.x}" y2="${path.end.y}"/>`,
+      );
+      for (const end of [path.start, path.end])
+        parts.push(
+          `<circle class="source-handle" cx="${end.x}" cy="${end.y}" r="${r}"/>`,
+        );
+      for (const key of path.keys) {
+        parts.push(
+          `<circle class="source-handle" cx="${path.start.x + direction.x * key.q}" cy="${path.start.y + direction.y * key.q}" r="${r * 0.5}"/>`,
+        );
+        if (total > 0) {
+          const at = key.s * total,
+            index = sampled.findIndex((p) => p.distance >= at),
+            p = sampled[index < 0 ? sampled.length - 1 : index];
+          parts.push(
+            `<circle class="source-handle" cx="${p.x}" cy="${p.y}" r="${r * 0.5}"/>`,
+          );
+        }
+      }
+      parts.push(
+        `<text class="source-text" x="${path.start.x + 8 / scale}" y="${path.start.y + 22 / scale}" font-size="${10 / scale}">PATH</text>`,
+      );
+      parts.push("</g>");
+    }
   }
-  if (guides && pts.length > 0) {
+  if (guides && pts.length > 0 && state.mode !== "C") {
     const sources =
       state.mode === "A"
         ? [{ ...stroke().source, label: "SOURCE 01", active: true }]
@@ -394,8 +436,15 @@ source = demo();
 randomPoints();
 $("image-name").textContent = "DEMO · 生成パターン";
 $("image-size").textContent = `${iw} × ${ih}`;
-for (const m of ["A", "B"] as const)
+for (const m of ["A", "B", "C"] as const)
   $(`mode-${m.toLowerCase()}`).onclick = () => edit(() => (state.mode = m));
+for (const [id, preset] of [
+  ["preset-uniform", "uniform"],
+  ["preset-hold", "hold"],
+  ["preset-reverse", "reverse"],
+] as const)
+  $(id).onclick = () =>
+    edit(() => (stroke().path.keys = structuredClone(pathPresets[preset])));
 $("kind").onchange = () =>
   edit(() => (state.kind = $<HTMLSelectElement>("kind").value as Kind));
 const changes: Record<string, (v: number) => void> = {
@@ -657,7 +706,7 @@ const nearest = (p: { x: number; y: number }) => {
   return best;
 };
 let drag: null | {
-  type: "point" | "pan";
+  type: "point" | "pan" | "path";
   id?: string;
   key?: string;
   start: { x: number; y: number };
@@ -680,8 +729,29 @@ $("stage").addEventListener("pointerdown", (event) => {
       pan: { ...pan },
     };
   } else if (stroke().visible) {
-    const existing = nearest(p);
-    if (existing) {
+    // In mode C the path endpoints are the mode's own controls; they win
+    // over control points when both fall inside the hit radius.
+    const endpoint =
+      state.mode === "C"
+        ? (["start", "end"] as const).find(
+            (which) =>
+              Math.hypot(
+                stroke().path[which].x - p.x,
+                stroke().path[which].y - p.y,
+              ) <
+              HIT_RADIUS / ((size().width / iw) * zoom),
+          )
+        : undefined;
+    const existing = endpoint ? undefined : nearest(p);
+    if (endpoint) {
+      drag = {
+        type: "path",
+        id: endpoint,
+        key: `drag:${++dragSequence}`,
+        start: p,
+        pan,
+      };
+    } else if (existing) {
       selected = existing.id;
       if (event.detail === 2) return;
       drag = {
@@ -740,6 +810,14 @@ $("stage").addEventListener("pointermove", (event) => {
       gestures.checkpoint(drag.key!, state);
       q.x = p.x;
       q.y = p.y;
+    }
+  }
+  if (drag.type === "path") {
+    const end = stroke().path[drag.id as "start" | "end"];
+    if (end.x !== p.x || end.y !== p.y) {
+      gestures.checkpoint(drag.key!, state);
+      end.x = p.x;
+      end.y = p.y;
     }
   }
   requestRender();

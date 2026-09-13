@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sampleCurve, widthAt } from "../src/geometry.ts";
+import { progressAt, sampleCurve, widthAt } from "../src/geometry.ts";
 import {
   initialState,
   activeStroke,
@@ -87,4 +87,32 @@ test("export preserves aspect for landscape, portrait and small images", () => {
   assert.deepEqual(outputSize(6000, 4000, 5000), { width: 5000, height: 3333 });
   assert.deepEqual(outputSize(4000, 6000, 5000), { width: 3333, height: 5000 });
   assert.deepEqual(outputSize(1, 10000, 2000), { width: 1, height: 2000 });
+});
+test("progression curve: uniform, hold, reverse and clamped ends", () => {
+  const uniform = [
+    { s: 0, q: 0 },
+    { s: 1, q: 1 },
+  ];
+  assert.equal(progressAt(uniform, 0.37), 0.37);
+  assert.equal(progressAt(uniform, -1), 0);
+  assert.equal(progressAt(uniform, 2), 1);
+  const hold = [
+    { s: 0, q: 0 },
+    { s: 0.25, q: 0.3 },
+    { s: 0.65, q: 0.3 },
+    { s: 0.8, q: 0.8 },
+    { s: 1, q: 1 },
+  ];
+  assert.ok(Math.abs(progressAt(hold, 0.125) - 0.15) < 1e-12);
+  assert.equal(progressAt(hold, 0.3), 0.3);
+  assert.equal(progressAt(hold, 0.65), 0.3);
+  assert.ok(Math.abs(progressAt(hold, 0.725) - 0.55) < 1e-12);
+  const reverse = [
+    { s: 0, q: 0 },
+    { s: 0.4, q: 0.7 },
+    { s: 0.7, q: 0.2 },
+    { s: 1, q: 1 },
+  ];
+  assert.ok(Math.abs(progressAt(reverse, 0.55) - 0.45) < 1e-12);
+  assert.ok(progressAt(reverse, 0.5) > progressAt(reverse, 0.6));
 });

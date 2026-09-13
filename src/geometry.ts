@@ -1,4 +1,4 @@
-import type { Vec, Point, Stroke, Kind } from "./model.ts";
+import type { Vec, Point, Stroke, Kind, PathKey } from "./model.ts";
 export type Sample = Vec & {
   factor: number;
   station: number;
@@ -68,6 +68,20 @@ export function curvePoints(points: Point[]): Point[] {
     else ps.push(p);
   }
   return ps;
+}
+/** Piecewise-linear progression f(s) for mode C: keys map the band's arc
+ * ratio s to the sampling path's arc ratio q. s outside the keys clamps to
+ * the nearest end; a flat segment holds, a falling segment runs backwards. */
+export function progressAt(keys: PathKey[], s: number): number {
+  if (!keys.length) return s;
+  if (s <= keys[0].s) return keys[0].q;
+  for (let i = 1; i < keys.length; i++) {
+    const a = keys[i - 1],
+      b = keys[i];
+    if (s <= b.s)
+      return b.s > a.s ? a.q + ((s - a.s) / (b.s - a.s)) * (b.q - a.q) : b.q;
+  }
+  return keys[keys.length - 1].q;
 }
 export function sampleCurve(
   stroke: Stroke,
