@@ -145,3 +145,25 @@ test("rescaling to a new image keeps shape via uniform scale and centering", () 
   assert.equal(activeStroke(tiny).source.length, 3);
   assert.equal(activeStroke(tiny).points[1].source!.length, 1);
 });
+test("rescaling carries the mode C sampling path with the same transform", () => {
+  const state = initialState(200, 100);
+  activeStroke(state).path = {
+    start: { x: 40, y: 20 },
+    end: { x: 160, y: 80 },
+    angle: 30,
+    length: 40,
+    keys: [
+      { s: 0, q: 0 },
+      { s: 0.5, q: 0.9 },
+      { s: 1, q: 1 },
+    ],
+  };
+  const next = activeStroke(
+    rescaleDocument(state, { width: 200, height: 100 }, { width: 100, height: 200 }),
+  ).path;
+  assert.deepEqual(next.start, { x: 20, y: 85 });
+  assert.deepEqual(next.end, { x: 80, y: 115 });
+  assert.equal(next.angle, 30);
+  assert.equal(next.length, 20);
+  assert.deepEqual(next.keys[1], { s: 0.5, q: 0.9 });
+});

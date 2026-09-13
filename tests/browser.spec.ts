@@ -1236,3 +1236,148 @@ test("loading a new image carries the composition over, rescaled and centered", 
   await ready(page);
   await expect(page.locator("#undo")).toBeEnabled();
 });
+
+test("mode C walks, holds and reverses the sampling path as keyed", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  const result = await page.evaluate(async () => {
+    const { Renderer } = await import("/src/renderer.ts");
+    const { initialState, activeStroke, pathPresets } =
+      await import("/src/model.ts");
+    const image = document.createElement("canvas");
+    image.width = 200;
+    image.height = 150;
+    const x = image.getContext("2d")!;
+    // Vertical color bands: the sampling path crosses red, green, then blue.
+    x.fillStyle = "#ff0000";
+    x.fillRect(0, 0, 60, 150);
+    x.fillStyle = "#00ff00";
+    x.fillRect(60, 0, 60, 150);
+    x.fillStyle = "#0000ff";
+    x.fillRect(120, 0, 80, 150);
+    const renderer = new Renderer(document.createElement("canvas"));
+    const state = initialState(200, 150);
+    state.mode = "C";
+    state.longEdge = 200;
+    const stroke = activeStroke(state);
+    stroke.width = 16;
+    stroke.points = [
+      { id: "a", x: 20, y: 110, factor: 1 },
+      { id: "b", x: 180, y: 110, factor: 1 },
+    ];
+    stroke.path = {
+      start: { x: 10, y: 75 },
+      end: { x: 190, y: 75 },
+      angle: 90,
+      length: 2,
+      keys: structuredClone(pathPresets.uniform),
+    };
+    const pixels = async (probes: number[]) => {
+      await renderer.render(image, 200, 150, state, () => false, () => {});
+      const bitmap = await createImageBitmap(await renderer.exportPNG());
+      const c = document.createElement("canvas");
+      c.width = 200;
+      c.height = 150;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(bitmap, 0, 0);
+      const out = probes.map((px) =>
+        Array.from(ctx.getImageData(px, 110, 1, 1).data),
+      );
+      bitmap.close();
+      return out;
+    };
+    // Probe x maps to band arc ratio s = (x - 20) / 160.
+    const uniform = await pixels([36, 100, 172]);
+    stroke.path.keys = structuredClone(pathPresets.hold);
+    const hold = await pixels([36, 76, 116, 164]);
+    stroke.path.keys = structuredClone(pathPresets.reverse);
+    const reverse = await pixels([84, 132, 176]);
+    const glError = renderer.gl.getError();
+    renderer.gl.getExtension("WEBGL_lose_context")?.loseContext();
+    return { uniform, hold, reverse, glError };
+  });
+  const rgb = (pixel: number[]) => pixel.slice(0, 3);
+  // Uniform: red, green, blue appear in path order along the band.
+  expect(rgb(result.uniform[0])).toEqual([255, 0, 0]);
+  expect(rgb(result.uniform[1])).toEqual([0, 255, 0]);
+  expect(rgb(result.uniform[2])).toEqual([0, 0, 255]);
+  // Hold: q freezes at 0.3 (x=64, green) between s=0.25 and s=0.65.
+  expect(rgb(result.hold[0])).toEqual([255, 0, 0]);
+  expect(rgb(result.hold[1])).toEqual([0, 255, 0]);
+  expect(result.hold[2]).toEqual(result.hold[1]);
+  expect(rgb(result.hold[3])).toEqual([0, 0, 255]);
+  // Reverse: the middle of the band has already been at blue and runs back to red.
+  expect(rgb(result.reverse[0])).toEqual([0, 0, 255]);
+  expect(rgb(result.reverse[1])).toEqual([255, 0, 0]);
+  expect(rgb(result.reverse[2])).toEqual([0, 0, 255]);
+  expect(result.glError).toBe(0);
+});
+
+test("mode C UI: presets, path sliders, endpoint dragging and export name", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await page.locator("#mode-c").click();
+  await ready(page);
+  await expect(page.locator("#mode-c")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("#path-presets")).toBeVisible();
+  await expect(page.locator("#source-selected")).toContainText("採取経路");
+  // The 03 sliders drive the path's fixed cross line in mode C.
+  await page.locator("#angle").fill("45");
+  await ready(page);
+  await page.locator("#source-length").fill("200");
+  await ready(page);
+  let path = (await debug(page)).strokes[0].path;
+  expect(path.angle).toBe(45);
+  expect(path.length).toBe(200);
+  expect((await debug(page)).strokes[0].source.angle).not.toBe(45);
+  // Presets replace the keys and undo restores them.
+  await expect(page.locator("#preset-uniform")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.locator("#preset-reverse").click();
+  await ready(page);
+  path = (await debug(page)).strokes[0].path;
+  expect(path.keys.map((k: any) => k.q)).toEqual([0, 0.7, 0.2, 1]);
+  await expect(page.locator("#preset-reverse")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.locator("#preset-uniform")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].path.keys.length).toBe(2);
+  // Dragging an endpoint moves the path, not the control points.
+  const before = await debug(page);
+  const rect = await page.locator("#art").boundingBox();
+  if (!rect) throw new Error("No image");
+  const toScreen = (p: any) => ({
+    x: rect.x + (p.x / 1600) * rect.width,
+    y: rect.y + (p.y / 1100) * rect.height,
+  });
+  const from = toScreen(before.strokes[0].path.start);
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 40, from.y - 30, { steps: 4 });
+  await page.mouse.up();
+  await ready(page);
+  const after = await debug(page);
+  expect(after.strokes[0].path.start.x).toBeGreaterThan(
+    before.strokes[0].path.start.x + 30,
+  );
+  expect(after.strokes[0].points).toEqual(before.strokes[0].points);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).strokes[0].path.start).toEqual(
+    before.strokes[0].path.start,
+  );
+  const exported = await download(page, "spline-smudge-mode-c");
+  expect(exported.filename).toMatch(/^centripetal_C_/);
+});

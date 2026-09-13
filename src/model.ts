@@ -22,6 +22,39 @@ export const kinds: Record<Kind, string> = {
   natural: "Natural cubic",
   tcb: "Kochanek–Bartels / TCB",
 };
+/** Progression key for mode C: at band arc-ratio s (0..1), the sampling
+ * position sits at path arc-ratio q (0..1). Interpolation is piecewise
+ * linear; a flat segment holds one spot, a falling one runs backwards. */
+export type PathKey = { s: number; q: number };
+export const pathPresets: Record<string, PathKey[]> = {
+  uniform: [
+    { s: 0, q: 0 },
+    { s: 1, q: 1 },
+  ],
+  hold: [
+    { s: 0, q: 0 },
+    { s: 0.25, q: 0.3 },
+    { s: 0.65, q: 0.3 },
+    { s: 0.8, q: 0.8 },
+    { s: 1, q: 1 },
+  ],
+  reverse: [
+    { s: 0, q: 0 },
+    { s: 0.4, q: 0.7 },
+    { s: 0.7, q: 0.2 },
+    { s: 1, q: 1 },
+  ],
+};
+/** Mode C sampling: a straight path on the photo walked by the progression
+ * keys. The cross line has a fixed angle and length (it does not follow the
+ * path's tangent), so speed edits and rotation stay separate concerns. */
+export type PathSampling = {
+  start: Vec;
+  end: Vec;
+  angle: number;
+  length: number;
+  keys: PathKey[];
+};
 export type Stroke = {
   id: string;
   name: string;
@@ -32,6 +65,7 @@ export type Stroke = {
   continuity: number;
   bias: number;
   source: Vec & { angle: number; length: number };
+  path: PathSampling;
 };
 /** B-mode color interpolation between adjacent source lines.
  * "srgb" mixes encoded channels (the original behaviour); the OKLab family
@@ -74,7 +108,7 @@ export function defaultOptions(): Options {
 }
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.
 export type DocumentState = {
-  mode: "A" | "B";
+  mode: "A" | "B" | "C";
   kind: Kind;
   strokes: Stroke[];
   activeId: string;
@@ -118,6 +152,13 @@ export function initialState(width: number, height: number): DocumentState {
           y: height * 0.65,
           angle: 90,
           length: Math.min(width, height) * 0.22,
+        },
+        path: {
+          start: { x: width * 0.2, y: height * 0.5 },
+          end: { x: width * 0.8, y: height * 0.5 },
+          angle: 90,
+          length: Math.min(width, height) * 0.22,
+          keys: structuredClone(pathPresets.uniform),
         },
       },
     ],
@@ -237,6 +278,11 @@ export function rescaleDocument(
     stroke.source.x = stroke.source.x * s + dx;
     stroke.source.y = stroke.source.y * s + dy;
     stroke.source.length = Math.max(1, stroke.source.length * s);
+    for (const end of [stroke.path.start, stroke.path.end]) {
+      end.x = end.x * s + dx;
+      end.y = end.y * s + dy;
+    }
+    stroke.path.length = Math.max(1, stroke.path.length * s);
     for (const point of stroke.points) {
       point.x = point.x * s + dx;
       point.y = point.y * s + dy;
