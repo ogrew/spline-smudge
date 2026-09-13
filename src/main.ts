@@ -356,6 +356,8 @@ async function drain() {
 }
 function edit(change: () => void) {
   if (exporting) return;
+  // Any other edit ends the "double click cancels the just-added point" window.
+  clickAddedPoint = null;
   history.push(state);
   change();
   requestRender();
@@ -697,10 +699,19 @@ const coordinate = (event: PointerEvent | MouseEvent | WheelEvent) => {
 };
 const inside = (p: { x: number; y: number }) =>
   p.x >= 0 && p.y >= 0 && p.x <= iw && p.y <= ih;
-const nearest = (p: { x: number; y: number }) =>
-  stroke().points.find(
-    (q) => Math.hypot(q.x - p.x, q.y - p.y) < 11 / ((size().width / iw) * zoom),
-  );
+const nearest = (p: { x: number; y: number }) => {
+  // Closest hit inside an 11 CSS px radius; the earlier point wins exact ties.
+  let bestDistance = 11 / ((size().width / iw) * zoom);
+  let best: (typeof state.strokes)[number]["points"][number] | undefined;
+  for (const q of stroke().points) {
+    const distance = Math.hypot(q.x - p.x, q.y - p.y);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = q;
+    }
+  }
+  return best;
+};
 let drag: null | {
   type: "point" | "pan";
   id?: string;
@@ -782,6 +793,9 @@ $("stage").addEventListener("pointermove", (event) => {
     const q = stroke().points.find((q) => q.id === drag!.id);
     if (q && (q.x !== p.x || q.y !== p.y)) {
       if (!drag.checkpoint) {
+        // Moving a point is an edit too; it must not be discarded by a later
+        // double click that still remembers a recently added point.
+        clickAddedPoint = null;
         history.push(state);
         drag.checkpoint = true;
       }

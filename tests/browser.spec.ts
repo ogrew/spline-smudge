@@ -852,6 +852,56 @@ test("no-op editing, blank double click history, point drag and cursor zoom", as
   );
 });
 
+test("clicking selects the closest control point, not the first within range", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  await page.locator("#clear").click();
+  await ready(page);
+  const rect = await page.locator("#art").boundingBox();
+  if (!rect) throw new Error("No image");
+  const y = rect.y + rect.height * 0.5,
+    x1 = rect.x + rect.width * 0.4;
+  await page.mouse.click(x1, y);
+  await ready(page);
+  await page.mouse.click(x1 + 25, y);
+  await ready(page);
+  // Drag the second point to about 7 CSS px from the first; both now sit
+  // inside the 11px hit radius of a click on the second point.
+  await page.mouse.move(x1 + 25, y);
+  await page.mouse.down();
+  await page.mouse.move(x1 + 7, y, { steps: 4 });
+  await page.mouse.up();
+  await ready(page);
+  await page.mouse.click(x1 + 7, y);
+  await expect(page.locator("#selected-name")).toHaveText("POINT 02");
+  // The hit test stays correct at a different zoom.
+  await page.locator("#one").click();
+  const zoomed = await page.locator("#art").boundingBox();
+  if (!zoomed) throw new Error("No image");
+  const second = (await debug(page)).strokes[0].points[1];
+  await page.mouse.click(
+    zoomed.x + (second.x / 1600) * zoomed.width,
+    zoomed.y + (second.y / 1100) * zoomed.height,
+  );
+  await expect(page.locator("#selected-name")).toHaveText("POINT 02");
+  await page.locator("#fit").click();
+  // Double-click deletion uses the same hit test and removes the second point.
+  const back = await page.locator("#art").boundingBox();
+  if (!back) throw new Error("No image");
+  await page.mouse.dblclick(
+    back.x + (second.x / 1600) * back.width,
+    back.y + (second.y / 1100) * back.height,
+  );
+  await ready(page);
+  const points = (await debug(page)).strokes[0].points;
+  expect(points.length).toBe(1);
+  expect(
+    Math.abs(points[0].x - ((x1 - rect.x) / rect.width) * 1600),
+  ).toBeLessThan(2);
+});
+
 test("renderer clears stale errors and reuses ribbon GPU state", async ({
   page,
 }) => {
