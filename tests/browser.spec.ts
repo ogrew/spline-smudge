@@ -1335,10 +1335,22 @@ test("mode C UI: presets, path sliders, endpoint dragging and export name", asyn
   expect(path.length).toBe(200);
   expect((await debug(page)).strokes[0].source.angle).not.toBe(45);
   // Presets replace the keys and undo restores them.
+  await expect(page.locator("#preset-uniform")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await page.locator("#preset-reverse").click();
   await ready(page);
   path = (await debug(page)).strokes[0].path;
   expect(path.keys.map((k: any) => k.q)).toEqual([0, 0.7, 0.2, 1]);
+  await expect(page.locator("#preset-reverse")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(page.locator("#preset-uniform")).toHaveAttribute(
+    "aria-pressed",
+    "false",
+  );
   await page.locator("#undo").click();
   await ready(page);
   expect((await debug(page)).strokes[0].path.keys.length).toBe(2);

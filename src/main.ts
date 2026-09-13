@@ -28,6 +28,11 @@ import { RenderQueue } from "./render-queue.ts";
 import { appTemplate } from "./ui-template.ts";
 
 const presetEdges = [2000, 3508, 5000];
+const presetButtons = [
+  ["preset-uniform", "uniform"],
+  ["preset-hold", "hold"],
+  ["preset-reverse", "reverse"],
+] as const;
 /** Layout and interaction tuning. All values are in CSS px or ms. */
 const FIT_MARGIN_X = 96; // stage padding around a fitted image
 const FIT_MARGIN_Y = 100;
@@ -146,6 +151,12 @@ function sync() {
   $("mode-b").setAttribute("aria-pressed", String(state.mode === "B"));
   $("mode-c").setAttribute("aria-pressed", String(state.mode === "C"));
   $("path-presets").hidden = state.mode !== "C";
+  const keys = JSON.stringify(stroke().path.keys);
+  for (const [id, preset] of presetButtons)
+    $(id).setAttribute(
+      "aria-pressed",
+      String(keys === JSON.stringify(pathPresets[preset])),
+    );
   const source = currentSource();
   $("source-selected").textContent =
     state.mode === "A"
@@ -438,11 +449,7 @@ $("image-name").textContent = "DEMO · 生成パターン";
 $("image-size").textContent = `${iw} × ${ih}`;
 for (const m of ["A", "B", "C"] as const)
   $(`mode-${m.toLowerCase()}`).onclick = () => edit(() => (state.mode = m));
-for (const [id, preset] of [
-  ["preset-uniform", "uniform"],
-  ["preset-hold", "hold"],
-  ["preset-reverse", "reverse"],
-] as const)
+for (const [id, preset] of presetButtons)
   $(id).onclick = () =>
     edit(() => (stroke().path.keys = structuredClone(pathPresets[preset])));
 $("kind").onchange = () =>
