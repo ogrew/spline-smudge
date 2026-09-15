@@ -1381,3 +1381,51 @@ test("mode C UI: presets, path sliders, endpoint dragging and export name", asyn
   const exported = await download(page, "spline-smudge-mode-c");
   expect(exported.filename).toMatch(/^centripetal_C_/);
 });
+
+test("interactions show a transient preview that settles back to full resolution", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await ready(page);
+  // 5000px output leaves plenty of room below the preview ceiling.
+  await page.locator("#resolution").selectOption("5000");
+  await ready(page);
+  const rect = await page.locator("#art").boundingBox();
+  if (!rect) throw new Error("No image");
+  const p = (await debug(page)).strokes[0].points[0];
+  const from = {
+    x: rect.x + (p.x / 1600) * rect.width,
+    y: rect.y + (p.y / 1100) * rect.height,
+  };
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 30, from.y + 20, { steps: 5 });
+  // The drag's render lands as a preview; exporting it is blocked.
+  await expect
+    .poll(() => page.evaluate(() => (window as any).smudgeDebug.preview))
+    .toBe(true);
+  await expect(page.locator("#export")).toBeDisabled();
+  await page.mouse.up();
+  // Release upgrades immediately; ready implies the full-resolution result.
+  await ready(page);
+  expect(await page.evaluate(() => (window as any).smudgeDebug.preview)).toBe(
+    false,
+  );
+  await expect(page.locator("#status")).not.toContainText("プレビュー");
+  await expect(page.locator("#export")).toBeEnabled();
+  // A wheel burst has no end event; the idle timer alone restores full res.
+  await page.mouse.move(from.x + 30, from.y + 20);
+  await page.keyboard.down("Shift");
+  await page.mouse.wheel(0, -120);
+  await page.keyboard.up("Shift");
+  await expect
+    .poll(() => page.evaluate(() => (window as any).smudgeDebug.preview))
+    .toBe(true);
+  await ready(page);
+  expect(await page.evaluate(() => (window as any).smudgeDebug.preview)).toBe(
+    false,
+  );
+  expect(
+    await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
+  ).toBe(0);
+});

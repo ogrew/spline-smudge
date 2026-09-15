@@ -11,6 +11,7 @@ import {
   kinds,
   outputSize,
   pointSource,
+  previewLongEdge,
   rescaleDocument,
   widthCap,
   pathPresets,
@@ -44,6 +45,7 @@ const WHEEL_ZOOM_RATE = 0.001; // exponent slope per wheel delta unit
 const WHEEL_UNITS_PER_DEGREE = 12; // Shift+wheel: delta units per degree of angle
 const WHEEL_BURST_MS = 400; // wheel events closer than this share one undo entry
 const ADD_CANCEL_MS = 750; // a blank double click can still cancel the added point
+const PREVIEW_UPGRADE_MS = 250; // idle time before a preview upgrades to full resolution
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
   document.getElementById(id) as T;
@@ -82,22 +84,57 @@ const history = new History();
 const gestures = new Gestures(history, () => {
   clickAddedPoint = null;
 });
-const queue = new RenderQueue<DocumentState>({
-  snapshot: () => structuredClone(state),
+// Continuous interactions render at a display-sized preview resolution; the
+// output resolution comes back on release or after a short idle. Exports and
+// the byte-identity guarantees only ever see full-resolution renders.
+type RenderJob = { state: DocumentState; previewEdge: number | null };
+let previewRequested = false; // the newest request wants a preview
+let displayIsPreview = false; // the image on screen is a preview
+let upgradeTimer: ReturnType<typeof setTimeout> | undefined;
+const displayEdge = () => {
+  const rect = $("stage").getBoundingClientRect();
+  return Math.round(Math.max(rect.width, rect.height) * devicePixelRatio);
+};
+const queue = new RenderQueue<RenderJob>({
+  snapshot: () => ({
+    state: structuredClone(state),
+    previewEdge: previewRequested
+      ? previewLongEdge(Math.max(size().width, size().height), displayEdge())
+      : null,
+  }),
   begin: () => {
     $("cancel").hidden = false;
     $("progress").hidden = false;
   },
-  started: (snapshot) => setStatus(`${snapshot.mode} を描画中…`),
-  run: (snapshot, cancelled) =>
-    renderer.render(source, iw, ih, snapshot, cancelled, (p) => {
-      $<HTMLProgressElement>("progress").value = p;
-    }),
-  completed: (snapshot, elapsed) => {
+  started: (job) => setStatus(`${job.state.mode} を描画中…`),
+  run: (job, cancelled) =>
+    renderer.render(
+      source,
+      iw,
+      ih,
+      job.state,
+      cancelled,
+      (p) => {
+        $<HTMLProgressElement>("progress").value = p;
+      },
+      job.previewEdge,
+    ),
+  completed: (job, elapsed) => {
+    displayIsPreview = job.previewEdge !== null;
     layout();
-    setStatus(
-      `${snapshot.mode} · ${size().width} × ${size().height} px · ${elapsed.toFixed(0)} ms`,
-    );
+    if (displayIsPreview) {
+      const p = outputSize(iw, ih, job.previewEdge!);
+      setStatus(
+        `${job.state.mode} · プレビュー ${p.width} × ${p.height} px · ${elapsed.toFixed(0)} ms`,
+      );
+      // Interactions without an end event (wheel bursts) settle through this.
+      upgradeTimer = setTimeout(() => {
+        if (!exporting) requestRender();
+      }, PREVIEW_UPGRADE_MS);
+    } else
+      setStatus(
+        `${job.state.mode} · ${size().width} × ${size().height} px · ${elapsed.toFixed(0)} ms`,
+      );
   },
   failed: (error) => {
     setStatus(error instanceof Error ? error.message : String(error));
@@ -106,7 +143,8 @@ const queue = new RenderQueue<DocumentState>({
   idle: (complete) => {
     $("cancel").hidden = true;
     $("progress").hidden = true;
-    $<HTMLButtonElement>("export").disabled = !complete || !renderer.ready;
+    $<HTMLButtonElement>("export").disabled =
+      !complete || displayIsPreview || !renderer.ready;
   },
 });
 const stroke = () => activeStroke(state);
@@ -360,7 +398,9 @@ function layout() {
   );
   overlay();
 }
-function requestRender() {
+function requestRender(preview = false) {
+  clearTimeout(upgradeTimer);
+  previewRequested = preview;
   // A-mode sources follow each stroke's first point.
   for (const s of state.strokes) {
     const first = s.points[0];
@@ -509,10 +549,13 @@ for (const [id, change] of Object.entries(changes)) {
     change(Number(input.value));
     if (currentValues[id]() === beforeValue) return;
     gestures.checkpoint(key, before ?? state);
-    requestRender();
+    requestRender(true);
   });
   for (const done of ["change", "blur"] as const)
-    input.addEventListener(done, () => gestures.end());
+    input.addEventListener(done, () => {
+      gestures.end();
+      if (previewRequested) requestRender();
+    });
 }
 $("resolution").onchange = () =>
   edit(() => {
@@ -681,7 +724,7 @@ $("stage").addEventListener(
           360) -
           180,
       );
-      requestRender();
+      requestRender(true);
       wheel.generation = gestures.generation;
       return;
     }
@@ -827,11 +870,13 @@ $("stage").addEventListener("pointermove", (event) => {
       end.y = p.y;
     }
   }
-  requestRender();
+  requestRender(true);
 });
 for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
   $("stage").addEventListener(event, () => {
     drag = null;
+    // The interaction is over; replace the transient preview right away.
+    if (previewRequested) requestRender();
   });
 $("stage").addEventListener("dblclick", (event) => {
   if (exporting || !stroke().visible) return;
@@ -886,7 +931,7 @@ $("cancel").onclick = () => {
   setStatus("中断しました。再計算で続きを確認できます。");
   $("recalculate").hidden = false;
 };
-$("recalculate").onclick = requestRender;
+$("recalculate").onclick = () => requestRender();
 $("load").onclick = () => $("file").click();
 $<HTMLInputElement>("file").onchange = async () => {
   const file = $<HTMLInputElement>("file").files?.[0];
@@ -910,6 +955,7 @@ $<HTMLInputElement>("file").onchange = async () => {
       bitmap.close();
       return;
     }
+    clearTimeout(upgradeTimer);
     queue.invalidate();
     // Let the in-flight render exit before releasing its source bitmap.
     await queue.whenIdle();
@@ -951,7 +997,7 @@ $<HTMLInputElement>("file").onchange = async () => {
   }
 };
 $("export").onclick = async () => {
-  if (exporting || queue.busy || !queue.complete) return;
+  if (exporting || queue.busy || !queue.complete || displayIsPreview) return;
   exporting = true;
   $<HTMLFieldSetElement>("controls").disabled = true;
   $<HTMLButtonElement>("export").disabled = true;
@@ -1006,7 +1052,10 @@ if (import.meta.env.DEV)
         return originalFile?.name ?? null;
       },
       get ready() {
-        return !queue.busy && queue.complete;
+        return !queue.busy && queue.complete && !displayIsPreview;
+      },
+      get preview() {
+        return displayIsPreview;
       },
       get limit() {
         return renderer.limit;

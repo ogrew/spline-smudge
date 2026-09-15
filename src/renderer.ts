@@ -94,6 +94,13 @@ export class Renderer {
   private photo?: Target;
   private working?: Target;
   private complete?: Target;
+  // Transient interaction previews render into their own small pair of
+  // targets and sample the shared full-resolution photo. Export and the
+  // byte-identity guarantees only ever touch the full-resolution pair.
+  private previewWorking?: Target;
+  private previewComplete?: Target;
+  private previewKey = "";
+  private showPreview = false;
   private sourceKey = "";
   private sourceObject?: CanvasImageSource;
   // False whenever another pass (e.g. present() during an await) may have
@@ -102,6 +109,8 @@ export class Renderer {
   width = 1;
   height = 1;
   ready = false;
+  // True once the full-resolution pair holds a finished image; previews never set it.
+  private fullReady = false;
   constructor(private canvas: HTMLCanvasElement) {
     const gl = canvas.getContext("webgl2", {
       alpha: false,
@@ -248,12 +257,19 @@ export class Renderer {
     const key = `${w}:${h}:${state.background}`;
     if (key === this.sourceKey && source === this.sourceObject) return;
     this.ready = false;
+    this.fullReady = false;
     this.sourceKey = "";
     this.sourceObject = undefined;
     this.drop(this.photo);
     this.drop(this.working);
     this.drop(this.complete);
     this.photo = this.working = this.complete = undefined;
+    // Preview pixels sample the old photo; they die with it.
+    this.drop(this.previewWorking);
+    this.drop(this.previewComplete);
+    this.previewWorking = this.previewComplete = undefined;
+    this.previewKey = "";
+    this.showPreview = false;
     this.width = w;
     this.height = h;
     const staging = document.createElement("canvas");
@@ -277,6 +293,17 @@ export class Renderer {
     this.sourceKey = key;
     this.sourceObject = source;
   }
+  private preparePreview(w: number, h: number) {
+    const key = `${w}:${h}`;
+    if (key === this.previewKey) return;
+    this.drop(this.previewWorking);
+    this.drop(this.previewComplete);
+    this.previewWorking = this.previewComplete = undefined;
+    this.previewKey = "";
+    this.previewWorking = this.target(w, h, true);
+    this.previewComplete = this.target(w, h, true);
+    this.previewKey = key;
+  }
   async render(
     source: CanvasImageSource,
     iw: number,
@@ -284,11 +311,19 @@ export class Renderer {
     state: DocumentState,
     cancelled: () => boolean,
     progress: (p: number) => void,
+    previewEdge: number | null = null,
   ): Promise<boolean> {
     this.prepare(source, iw, ih, state);
+    const dims =
+      previewEdge === null
+        ? { width: this.width, height: this.height }
+        : outputSize(iw, ih, previewEdge);
+    if (previewEdge !== null) this.preparePreview(dims.width, dims.height);
+    const working =
+      previewEdge === null ? this.working! : this.previewWorking!;
     const g = this.gl,
-      scale = this.width / iw;
-    this.copyTo(this.photo!, this.working!);
+      scale = dims.width / iw;
+    this.copyTo(this.photo!, working);
     const strokes = state.strokes.filter((stroke) => stroke.visible);
     // Photo-reactive options: each coefficient is 0 while its option is off,
     // which makes the shader output identical to the plain ribbon.
@@ -345,7 +380,8 @@ export class Renderer {
       if (samples.length > 1) {
         // A present() during the await below leaves foreign GPU state behind;
         // rebind the ribbon pipeline lazily so each stroke draws into working.
-        if (!this.ribbonReady) this.ribbonSetup(state.mode === "B", setup);
+        if (!this.ribbonReady)
+          this.ribbonSetup(state.mode === "B", setup, working, dims);
         const verts = ribbonMesh(samples, scaled, state.mode);
         this.uploadRibbon(verts);
         g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
@@ -357,7 +393,7 @@ export class Renderer {
       }
     }
     if (cancelled() || g.isContextLost()) return false;
-    g.bindTexture(g.TEXTURE_2D, this.working!.texture);
+    g.bindTexture(g.TEXTURE_2D, working.texture);
     g.generateMipmap(g.TEXTURE_2D);
     // Wait for GPU completion without blocking the UI; cancelled jobs never replace the completed image.
     const fence = g.fenceSync(g.SYNC_GPU_COMMANDS_COMPLETE, 0)!;
@@ -377,7 +413,17 @@ export class Renderer {
     } finally {
       g.deleteSync(fence);
     }
-    [this.working, this.complete] = [this.complete, this.working];
+    if (previewEdge === null) {
+      [this.working, this.complete] = [this.complete, this.working];
+      this.showPreview = false;
+      this.fullReady = true;
+    } else {
+      [this.previewWorking, this.previewComplete] = [
+        this.previewComplete,
+        this.previewWorking,
+      ];
+      this.showPreview = true;
+    }
     this.ready = true;
     progress(1);
     return true;
@@ -403,10 +449,12 @@ export class Renderer {
       mixMode: number;
       mixSpin: number;
     },
+    target: Target,
+    dims: { width: number; height: number },
   ) {
     const g = this.gl,
       p = this.ribbon;
-    this.bind(this.working!);
+    this.bind(target);
     g.useProgram(p.program);
     g.bindVertexArray(this.vao);
     g.enable(g.BLEND);
@@ -416,7 +464,7 @@ export class Renderer {
       g.ONE,
       g.ONE_MINUS_SRC_ALPHA,
     );
-    this.pair(p, "resolution", this.width, this.height);
+    this.pair(p, "resolution", dims.width, dims.height);
     this.flag(p, "perPoint", perPoint);
     g.uniform1f(this.location(p, "displacePx"), options.displacePx);
     g.uniform1f(this.location(p, "edgeAmount"), options.edgeAmount);
@@ -428,15 +476,19 @@ export class Renderer {
     this.ribbonReady = true;
   }
   present(width: number, height: number) {
-    if (!this.ready || !this.complete) return;
+    const image =
+      this.showPreview && this.previewComplete
+        ? this.previewComplete
+        : this.complete;
+    if (!this.ready || !image) return;
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
       this.canvas.height = height;
     }
-    this.copyTo(this.complete, null, true);
+    this.copyTo(image, null, true);
   }
   async exportPNG(): Promise<Blob> {
-    if (!this.ready || !this.complete)
+    if (!this.fullReady || !this.complete)
       throw new Error("描画の完了後に書き出してください。");
     const g = this.gl,
       w = this.width,

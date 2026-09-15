@@ -7,6 +7,24 @@ const INITIAL_WIDTH_FLOOR = 10;
 export const widthCap = (width: number, height: number) =>
   Math.max(1, Math.floor(Math.max(width, height) / 10));
 
+/** Long edge for transient interaction previews, or null to render at the
+ * output resolution. Display-sized with a quality floor and a cost ceiling;
+ * below the skip ratio the saving is not worth rendering twice. */
+const PREVIEW_MIN_EDGE = 800;
+const PREVIEW_MAX_EDGE = 2048;
+const PREVIEW_SKIP_RATIO = 0.8;
+export function previewLongEdge(
+  outputEdge: number,
+  displayEdge: number,
+): number | null {
+  const edge = Math.min(
+    PREVIEW_MAX_EDGE,
+    Math.max(PREVIEW_MIN_EDGE, displayEdge),
+    outputEdge,
+  );
+  return edge <= outputEdge * PREVIEW_SKIP_RATIO ? edge : null;
+}
+
 export type Vec = { x: number; y: number };
 export type SourceSettings = { angle: number; length: number };
 export type Point = Vec & {
