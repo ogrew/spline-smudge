@@ -1,4 +1,4 @@
-import { kinds, mixModes, reactionModes } from "./model.ts";
+import { kinds, mixModes, reactionModes, textureModes } from "./model.ts";
 
 const range = (
   id: string,
@@ -28,6 +28,9 @@ export const appTemplate = () => `
 <section><div class="section-title">04 <h2>オプション</h2></div><label class="option-toggle"><input id="reaction" type="checkbox">写真で帯を変形</label><div id="reaction-settings" class="option-settings" hidden><label class="sr-only" for="reaction-mode">変形アルゴリズム</label>${select(
   "reaction-mode",
   reactionModes,
-)}<div id="reaction-displace">${range("displace-amount", "変位量（短辺比）", -20, 20, 0.5)}</div><div id="reaction-edge">${range("edge-amount", "効き", -1, 1, 0.05)}</div></div><label class="option-toggle"><input id="shade" type="checkbox">フェイク3D</label><div id="shade-settings" class="option-settings" hidden>${range("shade-amount", "強さ", 0, 1, 0.05)}</div></section>
+)}<div id="reaction-displace">${range("displace-amount", "変位量（短辺比）", -20, 20, 0.5)}</div><div id="reaction-edge">${range("edge-amount", "効き", -1, 1, 0.05)}</div></div><label class="option-toggle"><input id="shade" type="checkbox">フェイク3D</label><div id="shade-settings" class="option-settings" hidden>${range("shade-amount", "強さ", 0, 1, 0.05)}</div><label class="option-toggle"><input id="texture" type="checkbox">筆の質感</label><div id="texture-settings" class="option-settings" hidden><label class="sr-only" for="texture-mode">質感の種類</label>${select(
+  "texture-mode",
+  textureModes,
+)}${range("texture-amount", "強さ", 0, 1, 0.05)}${range("texture-grain", "毛筋の間隔", 2, 48, 1)}</div></section>
 <section><div class="section-title">05 <h2>エクスポート設定</h2></div><label class="range-label" for="resolution">長辺の解像度</label><select id="resolution"><option value="2000">2000 px</option><option value="3508">3508 px</option><option value="5000">5000 px</option><option value="original">元画像と同じ</option></select><p id="dimensions" class="note"></p><label class="color-label" for="background">透明部分の背景色<input id="background" type="color"></label></section></fieldset></aside>
 <div class="workspace"><div class="toolbar"><div class="button-row"><button id="undo" title="⌘/Ctrl + Z">↶ 戻る</button><button id="redo" title="⌘/Ctrl + Shift + Z">↷</button></div><div class="view-options"><label><input id="guides" type="checkbox" checked>ガイド</label><button id="fit">全体</button><button id="one">100%</button><button id="minus" aria-label="縮小">−</button><span id="zoom-label">100%</span><button id="plus" aria-label="拡大">＋</button></div></div><div id="stage" tabindex="0" aria-label="写真の上をクリックして点を追加。ドラッグで移動、点のダブルクリックで削除。スペースとドラッグで表示を移動。"><div id="art"><canvas id="image"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div><div class="canvas-tag"><span id="image-name"></span><span id="image-size"></span></div><div id="empty-hint">写真の上をクリックして、曲線をつくる</div></div><footer><div><span class="status-dot"></span><span id="status" role="status" aria-live="polite">準備中</span></div><div class="footer-actions"><progress id="progress" max="1" value="0" hidden></progress><button id="cancel" hidden>中断</button><button id="recalculate" hidden>再計算</button></div></footer><div class="gesture-hint">クリック：点を追加　 /　 ダブルクリック：点を削除　 /　 Space＋ドラッグ：移動　 /　 ホイール：拡大縮小</div></div></main>`;

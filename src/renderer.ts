@@ -1,4 +1,4 @@
-import type { DocumentState, Stroke } from "./model.ts";
+import type { DocumentState, Stroke, TextureMode } from "./model.ts";
 import { outputSize } from "./model.ts";
 import { sampleCurve } from "./geometry.ts";
 import { ribbonMesh, ribbonStride } from "./ribbon-mesh.ts";
@@ -19,6 +19,13 @@ type Program = {
 const FRAME_BUDGET_MS = 8;
 /** Luminance-difference offset for edge strength, in source-image px. */
 const EDGE_SAMPLE_SOURCE_PX = 3;
+/** Shader index per brush texture mode; 0 is off. */
+const brushModeIndex: Record<TextureMode, number> = {
+  shodo: 1,
+  oil: 2,
+  edge: 3,
+  hybrid: 4,
+};
 const fullVertex = `#version 300 es
 precision highp float;
 out vec2 uv;
@@ -41,6 +48,7 @@ uniform float displacePx;
 uniform float edgeAmount;
 uniform float edgeTexel;
 out vec2 uvA; out vec2 uvB; out vec2 uv; out vec2 ribbonNormal;
+out vec2 band; out float bandHalf;
 const float EDGE_GAIN=3.0;      // luminance gradient to edge strength
 const float WIDTH_SCALE_MAX=3.0;
 float lum(vec2 p){vec3 c=texture(image,p/resolution).rgb;return dot(c,vec3(0.2126,0.7152,0.0722));}
@@ -52,14 +60,37 @@ vec2 dx=vec2(edgeTexel,0.0),dy=vec2(0.0,edgeTexel);
 float e=clamp(length(vec2(lum(center+dx)-lum(center-dx),lum(center+dy)-lum(center-dy)))*EDGE_GAIN,0.0,1.0);
 widthScale=clamp(1.0+edgeAmount*(e*2.0-1.0),0.0,WIDTH_SCALE_MAX);
 }
+// Band coordinates for brush textures: arc length s and the signed cross
+// offset v (after width modulation), plus the constant half width.
+band=vec2(misc.y,misc.x*widthScale);
+bandHalf=abs(misc.x)*widthScale;
 vec2 pos=center+normal*(misc.x*widthScale);
 if(displacePx!=0.0)pos+=normal*((lum(center)-0.5)*2.0*displacePx);
 gl_Position=vec4(pos/resolution*2.0-1.0,0,1);}`;
 const ribbonFragment = `#version 300 es
 precision highp float;
 in vec2 uvA; in vec2 uvB; in vec2 uv; in vec2 ribbonNormal;
+in vec2 band; in float bandHalf;
 uniform sampler2D image; uniform bool perPoint; uniform float shadeAmount; out vec4 color;
+uniform int brushMode;      // 0 off, 1 shodo, 2 oil, 3 edge, 4 hybrid
+uniform float brushAmount;
+uniform float brushGrain;   // streak spacing in source px
+uniform float brushSeed;
+uniform float sourceScale;  // output px per source px
 ${colorInterpolationGLSL}
+// Brush texture (experiment): a bristle streak field in band space (s along
+// the band, v across it, both source-image px). Streaks run long in s and
+// fine in v, and wander sideways so they read as hairs rather than stripes.
+const float STREAK_GRAINS=12.0; // streak length, in grains
+const vec3 BRUSH_LIGHT=vec3(-0.45,-0.6,0.66);
+float bhash(vec2 p){p=fract(p*vec2(127.1,311.7)+brushSeed);p+=dot(p,p+34.345);return fract(p.x*p.y);}
+float bnoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+return mix(mix(bhash(i),bhash(i+vec2(1,0)),f.x),mix(bhash(i+vec2(0,1)),bhash(i+vec2(1,1)),f.x),f.y);}
+float streaks(vec2 sv){
+float v=sv.y+(bnoise(vec2(sv.x/(brushGrain*6.0),17.0))-0.5)*brushGrain*1.6;
+vec2 q=vec2(sv.x/(brushGrain*STREAK_GRAINS),v/brushGrain);
+return bnoise(q)*0.55+bnoise(q*vec2(2.3,2.1)+7.7)*0.3+bnoise(q*vec2(4.9,4.2)+3.1)*0.15;
+}
 // Fake-3D shading: cylinder-profile pseudo normal, fixed upper-left light.
 const float ROUNDNESS=0.85;     // cross-section tilt of the pseudo normal
 const float ROUNDNESS2=0.7225;  // ROUNDNESS squared, literal to keep pixels exact
@@ -70,6 +101,45 @@ const float SHADE_SPECULAR=0.5;
 void main(){
 vec4 a=texture(image,uvA);
 color=perPoint?interpolateColor(a,texture(image,uvB),uv.y):a;
+if(brushMode!=0){
+vec2 sv=band/sourceScale;
+vec2 rn=normalize(ribbonNormal);
+vec3 L=normalize(BRUSH_LIGHT);
+float n=streaks(sv);
+if(brushMode==1||brushMode==4){
+// Dry-brush coverage: hard gaps plus translucent scraping around them,
+// with dropout growing toward the sides of the band.
+float sideBias=smoothstep(0.3,1.0,abs(uv.x*2.0-1.0));
+float threshold=brushAmount*(0.42+0.45*sideBias);
+float gaps=smoothstep(threshold-0.08,threshold+0.08,n);
+float cover=gaps*mix(0.8,1.0,smoothstep(threshold,threshold+0.35,n));
+color.a*=brushMode==4?mix(1.0,cover,0.85):cover;
+}
+if(brushMode==2||brushMode==4){
+// Paint relief: light the gradient of the streak height field, normalized
+// so a flat surface keeps the sampled color exactly. In hybrid, relief
+// fades out where the coverage ran dry so bare spots stay flat.
+float e=max(brushGrain*0.3,0.75);
+float heightMask=brushMode==4?smoothstep(brushAmount*0.42,brushAmount*0.42+0.3,n):1.0;
+float dv=streaks(sv+vec2(0.0,e))-streaks(sv-vec2(0.0,e));
+float ds=streaks(sv+vec2(e,0.0))-streaks(sv-vec2(e,0.0));
+vec2 slope=(rn*dv+vec2(-rn.y,rn.x)*ds)*brushAmount*3.0*heightMask;
+vec3 N=normalize(vec3(slope,1.0));
+float diffuse=max(dot(N,L),0.0);
+float specular=pow(max(dot(reflect(-L,N),vec3(0.0,0.0,1.0)),0.0),18.0);
+color.rgb=color.rgb*max(0.0,1.0+(diffuse-0.66)*1.25)+specular*0.3*brushAmount;
+}
+if(brushMode==3){
+// Edge rims: pooled darker paint at both edges, a highlight on the lit side.
+float edgePx=(bandHalf-abs(band.y))/sourceScale;
+float rimW=max(min(brushGrain,bandHalf/sourceScale*0.4),0.5);
+float rim=1.0-smoothstep(0.0,rimW,edgePx);
+float inner=1.0-smoothstep(0.0,rimW*0.45,edgePx);
+float facing=dot(rn*sign(band.y+1e-5),normalize(L.xy));
+color.rgb*=1.0-rim*brushAmount*(0.55-0.3*facing);
+color.rgb+=vec3(inner*brushAmount*0.6*max(facing,0.0));
+}
+}
 if(shadeAmount>0.0){
 float t=uv.x*2.0-1.0;
 vec3 N=normalize(vec3(normalize(ribbonNormal)*t*ROUNDNESS,sqrt(max(0.02,1.0-ROUNDNESS2*t*t))));
@@ -327,7 +397,7 @@ export class Renderer {
     const strokes = state.strokes.filter((stroke) => stroke.visible);
     // Photo-reactive options: each coefficient is 0 while its option is off,
     // which makes the shader output identical to the plain ribbon.
-    const { reaction, shade } = state.options;
+    const { reaction, shade, texture } = state.options;
     const setup = {
       displacePx:
         reaction.on && reaction.mode === "displace"
@@ -337,6 +407,11 @@ export class Renderer {
         reaction.on && reaction.mode === "edgeWidth" ? reaction.edgeAmount : 0,
       edgeTexel: EDGE_SAMPLE_SOURCE_PX * scale,
       shadeAmount: shade.on ? shade.amount : 0,
+      brushMode: texture.on ? brushModeIndex[texture.mode] : 0,
+      brushAmount: texture.on ? texture.amounts[texture.mode] : 0,
+      brushGrain: Math.max(1, texture.grain),
+      brushSeed: texture.seed,
+      sourceScale: scale,
       mixMode: mixModeIndex[state.mix.mode],
       // Whole turns only: the endpoints of every interval keep their sampled color.
       mixSpin:
@@ -446,6 +521,11 @@ export class Renderer {
       edgeAmount: number;
       edgeTexel: number;
       shadeAmount: number;
+      brushMode: number;
+      brushAmount: number;
+      brushGrain: number;
+      brushSeed: number;
+      sourceScale: number;
       mixMode: number;
       mixSpin: number;
     },
@@ -470,6 +550,11 @@ export class Renderer {
     g.uniform1f(this.location(p, "edgeAmount"), options.edgeAmount);
     g.uniform1f(this.location(p, "edgeTexel"), options.edgeTexel);
     g.uniform1f(this.location(p, "shadeAmount"), options.shadeAmount);
+    g.uniform1i(this.location(p, "brushMode"), options.brushMode);
+    g.uniform1f(this.location(p, "brushAmount"), options.brushAmount);
+    g.uniform1f(this.location(p, "brushGrain"), options.brushGrain);
+    g.uniform1f(this.location(p, "brushSeed"), options.brushSeed);
+    g.uniform1f(this.location(p, "sourceScale"), options.sourceScale);
     g.uniform1i(this.location(p, "mixMode"), options.mixMode);
     g.uniform1f(this.location(p, "mixSpin"), options.mixSpin);
     this.texture(p, "image", this.photo!.texture, 0);

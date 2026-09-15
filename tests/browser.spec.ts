@@ -1042,6 +1042,40 @@ test("photo options change the output, reveal settings only while on, and off ma
   await page.locator("#redo").click();
   await ready(page);
   expect((await debug(page)).options.shade.on).toBe(false);
+  // Brush texture: four modes with per-mode strength and a fixed seed.
+  await expect(page.locator("#texture-settings")).toBeHidden();
+  await page.locator("#texture").check();
+  await ready(page);
+  await expect(page.locator("#texture-settings")).toBeVisible();
+  expect(await page.locator("#texture-mode").inputValue()).toBe("shodo");
+  const textured: Record<string, Awaited<ReturnType<typeof download>>> = {};
+  textured.shodo = await download(page, "spline-smudge-texture-shodo");
+  for (const mode of ["oil", "edge", "hybrid"]) {
+    await page.locator("#texture-mode").selectOption(mode);
+    await ready(page);
+    textured[mode] = await download(page, `spline-smudge-texture-${mode}`);
+  }
+  const outputs = [baseline, ...Object.values(textured)];
+  for (let i = 0; i < outputs.length; i++)
+    for (let j = i + 1; j < outputs.length; j++)
+      expect(outputs[i].bytes.equals(outputs[j].bytes)).toBe(false);
+  // Strength is kept per mode.
+  await page.locator("#texture-amount").fill("0.4");
+  await ready(page);
+  await page.locator("#texture-mode").selectOption("shodo");
+  await ready(page);
+  expect(await page.locator("#texture-amount").inputValue()).toBe("0.7");
+  expect((await debug(page)).options.texture.amounts.hybrid).toBe(0.4);
+  // The fixed seed reproduces exact pixels after switching away and back.
+  const replay = await download(page, "spline-smudge-texture-replay");
+  expect(replay.bytes.equals(textured.shodo.bytes)).toBe(true);
+  await page.locator("#texture").uncheck();
+  await ready(page);
+  const untextured = await download(page, "spline-smudge-texture-off");
+  expect(untextured.bytes.equals(baseline.bytes)).toBe(true);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).options.texture.on).toBe(true);
   expect(
     await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
   ).toBe(0);
