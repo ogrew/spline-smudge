@@ -8,6 +8,7 @@ import {
   moveStroke,
   History,
   exportKind,
+  previewLongEdge,
   rescaleDocument,
 } from "../src/model.ts";
 test("duplicate gets independent point IDs, source settings and stable name", () => {
@@ -144,6 +145,18 @@ test("rescaling to a new image keeps shape via uniform scale and centering", () 
   assert.equal(activeStroke(tiny).width, 2);
   assert.equal(activeStroke(tiny).source.length, 3);
   assert.equal(activeStroke(tiny).points[1].source!.length, 1);
+});
+test("preview edge follows the display within bounds, or is skipped when the saving is small", () => {
+  // Display-sized when it saves enough against the output resolution.
+  assert.equal(previewLongEdge(5000, 1400), 1400);
+  assert.equal(previewLongEdge(2000, 1200), 1200);
+  // Ceiling on large displays, floor on small ones.
+  assert.equal(previewLongEdge(5000, 2800), 2048);
+  assert.equal(previewLongEdge(5000, 400), 800);
+  // No preview when it would not be meaningfully smaller than the output.
+  assert.equal(previewLongEdge(2000, 2800), null);
+  assert.equal(previewLongEdge(2000, 1900), null);
+  assert.equal(previewLongEdge(800, 400), null);
 });
 test("rescaling carries the mode C sampling path with the same transform", () => {
   const state = initialState(200, 100);
