@@ -146,6 +146,16 @@ test("rescaling to a new image keeps shape via uniform scale and centering", () 
   assert.equal(activeStroke(tiny).source.length, 3);
   assert.equal(activeStroke(tiny).points[1].source!.length, 1);
 });
+test("rescaling scales the kasure grain within its slider bounds", () => {
+  const state = initialState(200, 100);
+  state.options.kasure.grain = 8;
+  const grow = (to: { width: number; height: number }) =>
+    rescaleDocument(state, { width: 200, height: 100 }, to).options.kasure
+      .grain;
+  assert.equal(grow({ width: 400, height: 200 }), 16);
+  assert.equal(grow({ width: 4000, height: 2000 }), 48);
+  assert.equal(grow({ width: 20, height: 10 }), 2);
+});
 test("preview edge follows the display within bounds, or is skipped when the saving is small", () => {
   // Display-sized when it saves enough against the output resolution.
   assert.equal(previewLongEdge(5000, 1400), 1400);

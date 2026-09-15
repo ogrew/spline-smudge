@@ -3,8 +3,10 @@ import { pointSource } from "./model.ts";
 import { curvePoints, progressAt, type Sample } from "./geometry.ts";
 
 /** Layout per vertex: center.xy, unit normal.xy, sourceA.xy, sourceB.xy,
- * (cross-section, interval fraction), (signed half-width offset px, 0).
- * The vertex shader assembles the final position so photo-reactive options
+ * (cross-section, interval fraction), (signed half-width offset px, band arc
+ * length px). The arc length is whole-band, not per-interval, so textures in
+ * band space never restart at color-station or progression-key joins. The
+ * vertex shader assembles the final position so photo-reactive options
  * (displacement, edge-modulated width) can move vertices without new meshes. */
 export const ribbonStride = 12;
 function lerpSample(a: Sample, b: Sample, t: number): Sample {
@@ -126,7 +128,7 @@ export function ribbonMesh(
         vertices[offset++] =
           mode === "B" ? Math.max(0, Math.min(1, p.station - index)) : 0;
         vertices[offset++] = r;
-        vertices[offset++] = 0;
+        vertices[offset++] = p.distance;
       }
     }
   }

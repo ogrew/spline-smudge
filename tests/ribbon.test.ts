@@ -59,6 +59,8 @@ test("vertex carries curve center, unit normal and signed half-width offset", ()
     // Horizontal line, factor 1: offset is ± half the base width.
     assert.ok(Math.abs(Math.abs(mesh[i + 10]) - 15) < 1e-5);
     assert.equal(Math.sign(mesh[i + 10]), Math.sign(edge - 0.5));
+    // Whole-band arc length rides along for band-space textures.
+    assert.ok(Math.abs(mesh[i + 11] - (mesh[i] - 20)) < 1e-3);
   }
 });
 test("B mesh splits color intervals and is finite at zero widths and coincident points", () => {

@@ -117,11 +117,25 @@ export type Options = {
   };
   /** Fake 3D: cylinder-profile shading across the ribbon cross-section, 0..1. */
   shade: { on: boolean; amount: number };
+  /** Dry-brush kasure: generated bristle coverage over the ribbon,
+   * independent of what the photo supplies. The streak field lives in band
+   * coordinates (arc length s, cross distance v) in source-image px, so
+   * streak counts survive output-resolution changes. */
+  kasure: {
+    on: boolean;
+    /** Strength 0..1. */
+    amount: number;
+    /** Streak spacing in source-image px; rescales with image swaps. */
+    grain: number;
+    /** Fixed noise seed so redraws, history and exports reproduce exactly. */
+    seed: number;
+  };
 };
 export function defaultOptions(): Options {
   return {
     reaction: { on: false, mode: "displace", displaceAmount: 6, edgeAmount: 0.6 },
     shade: { on: false, amount: 0.65 },
+    kasure: { on: false, amount: 0.7, grain: 8, seed: 1 },
   };
 }
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.
@@ -291,6 +305,11 @@ export function rescaleDocument(
     dy = (to.height - from.height * s) / 2;
   const cap = widthCap(to.width, to.height);
   const next = structuredClone(state);
+  // Brush streak spacing is in source px; it follows the same uniform scale.
+  next.options.kasure.grain = Math.min(
+    48,
+    Math.max(2, Math.round(next.options.kasure.grain * s)),
+  );
   for (const stroke of next.strokes) {
     stroke.width = Math.max(1, Math.min(Math.round(stroke.width * s), cap));
     stroke.source.x = stroke.source.x * s + dx;

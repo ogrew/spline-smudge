@@ -1042,6 +1042,30 @@ test("photo options change the output, reveal settings only while on, and off ma
   await page.locator("#redo").click();
   await ready(page);
   expect((await debug(page)).options.shade.on).toBe(false);
+  // Dry-brush kasure: strength and grain change pixels, the fixed seed
+  // reproduces them exactly, and off restores the baseline bytes.
+  await expect(page.locator("#kasure-settings")).toBeHidden();
+  await page.locator("#kasure").check();
+  await ready(page);
+  await expect(page.locator("#kasure-settings")).toBeVisible();
+  expect(await page.locator("#kasure-amount").inputValue()).toBe("0.7");
+  const kasure = await download(page, "spline-smudge-kasure");
+  expect(kasure.bytes.equals(baseline.bytes)).toBe(false);
+  await page.locator("#kasure-grain").fill("24");
+  await ready(page);
+  const coarse = await download(page, "spline-smudge-kasure-grain");
+  expect(coarse.bytes.equals(kasure.bytes)).toBe(false);
+  await page.locator("#kasure-grain").fill("8");
+  await ready(page);
+  const replay = await download(page, "spline-smudge-kasure-replay");
+  expect(replay.bytes.equals(kasure.bytes)).toBe(true);
+  await page.locator("#kasure").uncheck();
+  await ready(page);
+  const bare = await download(page, "spline-smudge-kasure-off");
+  expect(bare.bytes.equals(baseline.bytes)).toBe(true);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).options.kasure.on).toBe(true);
   expect(
     await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
   ).toBe(0);
