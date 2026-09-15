@@ -18,7 +18,6 @@ import {
   reactionModes,
   mixModes,
   type MixMode,
-  type TextureMode,
   type SourceSettings,
   type DocumentState,
   type Kind,
@@ -225,13 +224,13 @@ function sync() {
       options().reaction.edgeAmount.toFixed(2),
     ],
     "shade-amount": [options().shade.amount, options().shade.amount.toFixed(2)],
-    "texture-amount": [
-      options().texture.amounts[options().texture.mode],
-      options().texture.amounts[options().texture.mode].toFixed(2),
+    "kasure-amount": [
+      options().kasure.amount,
+      options().kasure.amount.toFixed(2),
     ],
-    "texture-grain": [
-      options().texture.grain,
-      `${Math.round(options().texture.grain)} px`,
+    "kasure-grain": [
+      options().kasure.grain,
+      `${Math.round(options().kasure.grain)} px`,
     ],
     "mix-spin": [
       state.mix.turns,
@@ -241,16 +240,15 @@ function sync() {
   // Option settings appear only while their toggle is on.
   $<HTMLInputElement>("reaction").checked = options().reaction.on;
   $<HTMLInputElement>("shade").checked = options().shade.on;
-  $<HTMLInputElement>("texture").checked = options().texture.on;
+  $<HTMLInputElement>("kasure").checked = options().kasure.on;
   $<HTMLSelectElement>("reaction-mode").value = options().reaction.mode;
-  $<HTMLSelectElement>("texture-mode").value = options().texture.mode;
   $<HTMLSelectElement>("mix-mode").value = state.mix.mode;
   $("mix-spin-row").hidden = state.mix.mode !== "hueSpin";
   $("reaction-settings").hidden = !options().reaction.on;
   $("reaction-displace").hidden = options().reaction.mode !== "displace";
   $("reaction-edge").hidden = options().reaction.mode !== "edgeWidth";
   $("shade-settings").hidden = !options().shade.on;
-  $("texture-settings").hidden = !options().texture.on;
+  $("kasure-settings").hidden = !options().kasure.on;
   $<HTMLInputElement>("width").max = String(widthCap(iw, ih));
   $<HTMLInputElement>("source-length").max = String(
     Math.ceil(Math.hypot(iw, ih)),
@@ -520,9 +518,8 @@ const changes: Record<string, (v: number) => void> = {
   "displace-amount": (v) => (options().reaction.displaceAmount = v),
   "edge-amount": (v) => (options().reaction.edgeAmount = v),
   "shade-amount": (v) => (options().shade.amount = v),
-  "texture-amount": (v) =>
-    (options().texture.amounts[options().texture.mode] = v),
-  "texture-grain": (v) => (options().texture.grain = v),
+  "kasure-amount": (v) => (options().kasure.amount = v),
+  "kasure-grain": (v) => (options().kasure.grain = v),
   "mix-spin": (v) => (state.mix.turns = Math.round(v)),
 };
 const currentValues: Record<string, () => number> = {
@@ -536,14 +533,14 @@ const currentValues: Record<string, () => number> = {
   "displace-amount": () => options().reaction.displaceAmount,
   "edge-amount": () => options().reaction.edgeAmount,
   "shade-amount": () => options().shade.amount,
-  "texture-amount": () => options().texture.amounts[options().texture.mode],
-  "texture-grain": () => options().texture.grain,
+  "kasure-amount": () => options().kasure.amount,
+  "kasure-grain": () => options().kasure.grain,
   "mix-spin": () => state.mix.turns,
 };
 for (const [id, apply] of Object.entries({
   reaction: (on: boolean) => (options().reaction.on = on),
   shade: (on: boolean) => (options().shade.on = on),
-  texture: (on: boolean) => (options().texture.on = on),
+  kasure: (on: boolean) => (options().kasure.on = on),
 }))
   $<HTMLInputElement>(id).onchange = () =>
     edit(() => apply($<HTMLInputElement>(id).checked));
@@ -557,12 +554,6 @@ $("reaction-mode").onchange = () =>
     () =>
       (options().reaction.mode = $<HTMLSelectElement>("reaction-mode")
         .value as ReactionMode),
-  );
-$("texture-mode").onchange = () =>
-  edit(
-    () =>
-      (options().texture.mode = $<HTMLSelectElement>("texture-mode")
-        .value as TextureMode),
   );
 for (const [id, change] of Object.entries(changes)) {
   const input = $<HTMLInputElement>(id),

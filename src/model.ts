@@ -102,13 +102,6 @@ export const reactionModes: Record<ReactionMode, string> = {
   displace: "輝度ディスプレイスメント",
   edgeWidth: "エッジで幅を変調",
 };
-export type TextureMode = "shodo" | "oil" | "edge" | "hybrid";
-export const textureModes: Record<TextureMode, string> = {
-  shodo: "習字のかすれ",
-  oil: "油絵の凹凸",
-  edge: "エッジ強調",
-  hybrid: "複合（かすれ＋凹凸）",
-};
 /** Photo-reactive options. Whole-document, undoable, part of the render snapshot. */
 export type Options = {
   /** Deform the ribbon from the photo with one selectable algorithm:
@@ -124,15 +117,14 @@ export type Options = {
   };
   /** Fake 3D: cylinder-profile shading across the ribbon cross-section, 0..1. */
   shade: { on: boolean; amount: number };
-  /** Brush texture (experiment): generated bristle coverage, paint relief or
-   * edge rims over the ribbon, independent of what the photo supplies. The
-   * pattern lives in band coordinates (arc length s, cross distance v) in
-   * source-image px, so streak counts survive output-resolution changes. */
-  texture: {
+  /** Dry-brush kasure: generated bristle coverage over the ribbon,
+   * independent of what the photo supplies. The streak field lives in band
+   * coordinates (arc length s, cross distance v) in source-image px, so
+   * streak counts survive output-resolution changes. */
+  kasure: {
     on: boolean;
-    mode: TextureMode;
-    /** Strength 0..1, kept per mode so comparing modes preserves tuning. */
-    amounts: Record<TextureMode, number>;
+    /** Strength 0..1. */
+    amount: number;
     /** Streak spacing in source-image px; rescales with image swaps. */
     grain: number;
     /** Fixed noise seed so redraws, history and exports reproduce exactly. */
@@ -143,13 +135,7 @@ export function defaultOptions(): Options {
   return {
     reaction: { on: false, mode: "displace", displaceAmount: 6, edgeAmount: 0.6 },
     shade: { on: false, amount: 0.65 },
-    texture: {
-      on: false,
-      mode: "shodo",
-      amounts: { shodo: 0.7, oil: 0.7, edge: 0.7, hybrid: 0.7 },
-      grain: 8,
-      seed: 1,
-    },
+    kasure: { on: false, amount: 0.7, grain: 8, seed: 1 },
   };
 }
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.
@@ -320,9 +306,9 @@ export function rescaleDocument(
   const cap = widthCap(to.width, to.height);
   const next = structuredClone(state);
   // Brush streak spacing is in source px; it follows the same uniform scale.
-  next.options.texture.grain = Math.min(
+  next.options.kasure.grain = Math.min(
     48,
-    Math.max(2, Math.round(next.options.texture.grain * s)),
+    Math.max(2, Math.round(next.options.kasure.grain * s)),
   );
   for (const stroke of next.strokes) {
     stroke.width = Math.max(1, Math.min(Math.round(stroke.width * s), cap));
