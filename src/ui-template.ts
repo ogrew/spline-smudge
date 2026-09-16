@@ -15,7 +15,7 @@ const select = (id: string, entries: Record<string, string>) =>
 
 /** The static editor markup. Everything dynamic is filled in by sync(). */
 export const appTemplate = () => `
-<header><div class="brand"><span class="mark">〰</span><h1>Spline Smudge<small>PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">画像を選択 <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>エクスポート ↓</button></div></header>
+<header><div class="brand"><span class="mark">〰</span><h1>引伸<small>INSHIN · PHOTO / CURVE STUDY</small></h1><span class="badge">PROTOTYPE 01</span></div><div class="header-actions"><button id="load">画像を選択 <span>↗</span></button><input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png" hidden><button id="export" class="primary" disabled>エクスポート ↓</button></div></header>
 <main><aside><fieldset id="controls"><section><div class="section-title">01 <h2>カラーピック</h2></div><div class="modes"><button id="mode-a" aria-pressed="true" title="始点の採取線で採った色の並びを、帯全体にのばす"><b>のばす</b><small>stretch</small></button><button id="mode-b" aria-pressed="false" title="各点で採った色を、点のあいだでつないで補間する"><b>つなぐ</b><small>blend</small></button><button id="mode-c" aria-pressed="false" title="写真に置いた採取経路をたどりながら色を採る"><b>たどる</b><small>trace</small></button></div><div id="mix-settings" hidden><label class="range-label" for="mix-mode">色補間</label>${select(
   "mix-mode",
   mixModes,
