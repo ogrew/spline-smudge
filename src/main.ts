@@ -243,6 +243,8 @@ function sync() {
   $<HTMLInputElement>("kasure").checked = options().kasure.on;
   $<HTMLSelectElement>("reaction-mode").value = options().reaction.mode;
   $<HTMLSelectElement>("mix-mode").value = state.mix.mode;
+  // Color interpolation only applies to B's per-point crossfades.
+  $("mix-settings").hidden = state.mode !== "B";
   $("mix-spin-row").hidden = state.mix.mode !== "hueSpin";
   $("reaction-settings").hidden = !options().reaction.on;
   $("reaction-displace").hidden = options().reaction.mode !== "displace";
