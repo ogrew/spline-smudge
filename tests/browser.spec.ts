@@ -1076,8 +1076,11 @@ test("B color interpolation select swaps modes and shows the spin slider only fo
 }) => {
   await page.goto("/");
   await ready(page);
+  // The interpolation select only shows while B is active.
+  await expect(page.locator("#mix-settings")).toBeHidden();
   await page.locator("#mode-b").click();
   await ready(page);
+  await expect(page.locator("#mix-settings")).toBeVisible();
   await expect(page.locator("#mix-spin-row")).toBeHidden();
   const baseline = await download(page, "spline-smudge-mix-srgb");
   await page.locator("#mix-mode").selectOption("oklab");
@@ -1203,6 +1206,9 @@ test("loading a new image carries the composition over, rescaled and centered", 
   await ready(page);
   const copyId = (await debug(page)).activeId;
   await page.locator(`[data-visibility="${copyId}"]`).uncheck();
+  await ready(page);
+  // Pick a fixed preset first; the default now follows the source image.
+  await page.locator("#resolution").selectOption("2000");
   await ready(page);
   const before = await debug(page);
   // 1600×1100 → 160×100: scale = 100/1100, horizontally centered.
@@ -1403,7 +1409,7 @@ test("mode C UI: presets, path sliders, endpoint dragging and export name", asyn
     before.strokes[0].path.start,
   );
   const exported = await download(page, "spline-smudge-mode-c");
-  expect(exported.filename).toMatch(/^centripetal_C_/);
+  expect(exported.filename).toMatch(/^natural_C_/);
 });
 
 test("interactions show a transient preview that settles back to full resolution", async ({

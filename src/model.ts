@@ -91,7 +91,7 @@ export type Stroke = {
  * follows OKLCH but adds a fixed extra hue rotation across each interval. */
 export type MixMode = "srgb" | "oklab" | "oklch" | "oklchLong" | "hueSpin";
 export const mixModes: Record<MixMode, string> = {
-  srgb: "sRGB（従来）",
+  srgb: "sRGB",
   oklab: "OKLab",
   oklch: "OKLCH · 色相近回り",
   oklchLong: "OKLCH · 色相遠回り",
@@ -155,11 +155,12 @@ export type DocumentState = {
 export function initialState(width: number, height: number): DocumentState {
   return {
     mode: "A",
-    kind: "centripetal",
+    kind: "natural",
     activeId: "stroke-1",
     nextStrokeNumber: 2,
     background: "#f3f0e8",
-    longEdge: 2000,
+    // Default export size follows the source image ("元画像と同じ").
+    longEdge: Math.max(width, height),
     options: defaultOptions(),
     mix: { mode: "srgb", turns: 1 },
     strokes: [

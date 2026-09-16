@@ -29,6 +29,8 @@ import { RenderQueue } from "./render-queue.ts";
 import { appTemplate } from "./ui-template.ts";
 
 const presetEdges = [2000, 3508, 5000];
+// The modes stay A/B/C internally and in export names; the UI shows these.
+const modeLabels = { A: "のばす", B: "つなぐ", C: "たどる" } as const;
 const presetButtons = [
   ["preset-uniform", "uniform"],
   ["preset-hold", "hold"],
@@ -106,7 +108,7 @@ const queue = new RenderQueue<RenderJob>({
     $("cancel").hidden = false;
     $("progress").hidden = false;
   },
-  started: (job) => setStatus(`${job.state.mode} を描画中…`),
+  started: (job) => setStatus(`${modeLabels[job.state.mode]} を描画中…`),
   run: (job, cancelled) =>
     renderer.render(
       source,
@@ -125,7 +127,7 @@ const queue = new RenderQueue<RenderJob>({
     if (displayIsPreview) {
       const p = outputSize(iw, ih, job.previewEdge!);
       setStatus(
-        `${job.state.mode} · プレビュー ${p.width} × ${p.height} px · ${elapsed.toFixed(0)} ms`,
+        `${modeLabels[job.state.mode]} · プレビュー ${p.width} × ${p.height} px · ${elapsed.toFixed(0)} ms`,
       );
       // Interactions without an end event (wheel bursts) settle through this.
       upgradeTimer = setTimeout(() => {
@@ -133,7 +135,7 @@ const queue = new RenderQueue<RenderJob>({
       }, PREVIEW_UPGRADE_MS);
     } else
       setStatus(
-        `${job.state.mode} · ${size().width} × ${size().height} px · ${elapsed.toFixed(0)} ms`,
+        `${modeLabels[job.state.mode]} · ${size().width} × ${size().height} px · ${elapsed.toFixed(0)} ms`,
       );
   },
   failed: (error) => {
@@ -198,11 +200,11 @@ function sync() {
   const source = currentSource();
   $("source-selected").textContent =
     state.mode === "A"
-      ? "始点の採取線 · A"
+      ? "始点の採取線 · のばす"
       : state.mode === "C"
-        ? "採取経路 · C（端点をドラッグで移動）"
+        ? "採取経路 · たどる（端点をドラッグで移動）"
         : point()
-        ? `POINT ${String(stroke().points.indexOf(point()!) + 1).padStart(2, "0")} の採取線 · B`
+        ? `POINT ${String(stroke().points.indexOf(point()!) + 1).padStart(2, "0")} の採取線 · つなぐ`
         : "編集する点を選択してください";
   for (const id of ["angle", "source-length"])
     $<HTMLInputElement>(id).disabled = state.mode === "B" && !point();
@@ -243,6 +245,8 @@ function sync() {
   $<HTMLInputElement>("kasure").checked = options().kasure.on;
   $<HTMLSelectElement>("reaction-mode").value = options().reaction.mode;
   $<HTMLSelectElement>("mix-mode").value = state.mix.mode;
+  // Color interpolation only applies to B's per-point crossfades.
+  $("mix-settings").hidden = state.mode !== "B";
   $("mix-spin-row").hidden = state.mix.mode !== "hueSpin";
   $("reaction-settings").hidden = !options().reaction.on;
   $("reaction-displace").hidden = options().reaction.mode !== "displace";
