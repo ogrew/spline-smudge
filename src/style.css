@@ -170,10 +170,10 @@ section {
   white-space: nowrap;
 }
 .modes small {
-  display: block;
   color: #a8b19f;
   font-size: 8px;
-  margin-top: 5px;
+  letter-spacing: 0.02em;
+  margin-left: 2px;
 }
 .note {
   font-size: 10px;
