@@ -1066,6 +1066,38 @@ test("photo options change the output, reveal settings only while on, and off ma
   await page.locator("#undo").click();
   await ready(page);
   expect((await debug(page)).options.kasure.on).toBe(true);
+  await page.locator("#redo").click();
+  await ready(page);
+  // Light-trail glow: the halo and core push change pixels, parameters
+  // replay exactly, and off restores the baseline bytes.
+  await expect(page.locator("#glow-settings")).toBeHidden();
+  await page.locator("#glow").check();
+  await ready(page);
+  await expect(page.locator("#glow-settings")).toBeVisible();
+  expect(await page.locator("#glow-width").inputValue()).toBe("1");
+  expect(await page.locator("#glow-core").inputValue()).toBe("0.5");
+  const glow = await download(page, "spline-smudge-glow");
+  expect(glow.bytes.equals(baseline.bytes)).toBe(false);
+  await page.locator("#glow-width").fill("2.5");
+  await ready(page);
+  const wide = await download(page, "spline-smudge-glow-wide");
+  expect(wide.bytes.equals(glow.bytes)).toBe(false);
+  await page.locator("#glow-spread").fill("1");
+  await ready(page);
+  const spread = await download(page, "spline-smudge-glow-spread");
+  expect(spread.bytes.equals(wide.bytes)).toBe(false);
+  await page.locator("#glow-width").fill("1");
+  await page.locator("#glow-spread").fill("0");
+  await ready(page);
+  const glowReplay = await download(page, "spline-smudge-glow-replay");
+  expect(glowReplay.bytes.equals(glow.bytes)).toBe(true);
+  await page.locator("#glow").uncheck();
+  await ready(page);
+  const glowOff = await download(page, "spline-smudge-glow-off");
+  expect(glowOff.bytes.equals(baseline.bytes)).toBe(true);
+  await page.locator("#undo").click();
+  await ready(page);
+  expect((await debug(page)).options.glow.on).toBe(true);
   expect(
     await page.evaluate(() => (window as any).smudgeDebug.gl.getError()),
   ).toBe(0);

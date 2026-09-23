@@ -234,6 +234,12 @@ function sync() {
       options().kasure.grain,
       `${Math.round(options().kasure.grain)} px`,
     ],
+    "glow-width": [
+      options().glow.width,
+      `${options().glow.width.toFixed(2)} ×`,
+    ],
+    "glow-spread": [options().glow.spread, options().glow.spread.toFixed(2)],
+    "glow-core": [options().glow.core, options().glow.core.toFixed(2)],
     "mix-spin": [
       state.mix.turns,
       `${state.mix.turns > 0 ? "+" : ""}${state.mix.turns} 回転`,
@@ -243,6 +249,7 @@ function sync() {
   $<HTMLInputElement>("reaction").checked = options().reaction.on;
   $<HTMLInputElement>("shade").checked = options().shade.on;
   $<HTMLInputElement>("kasure").checked = options().kasure.on;
+  $<HTMLInputElement>("glow").checked = options().glow.on;
   $<HTMLSelectElement>("reaction-mode").value = options().reaction.mode;
   $<HTMLSelectElement>("mix-mode").value = state.mix.mode;
   // Color interpolation only applies to B's per-point crossfades.
@@ -253,6 +260,7 @@ function sync() {
   $("reaction-edge").hidden = options().reaction.mode !== "edgeWidth";
   $("shade-settings").hidden = !options().shade.on;
   $("kasure-settings").hidden = !options().kasure.on;
+  $("glow-settings").hidden = !options().glow.on;
   $<HTMLInputElement>("width").max = String(widthCap(iw, ih));
   $<HTMLInputElement>("source-length").max = String(
     Math.ceil(Math.hypot(iw, ih)),
@@ -524,6 +532,9 @@ const changes: Record<string, (v: number) => void> = {
   "shade-amount": (v) => (options().shade.amount = v),
   "kasure-amount": (v) => (options().kasure.amount = v),
   "kasure-grain": (v) => (options().kasure.grain = v),
+  "glow-width": (v) => (options().glow.width = v),
+  "glow-spread": (v) => (options().glow.spread = v),
+  "glow-core": (v) => (options().glow.core = v),
   "mix-spin": (v) => (state.mix.turns = Math.round(v)),
 };
 const currentValues: Record<string, () => number> = {
@@ -539,12 +550,16 @@ const currentValues: Record<string, () => number> = {
   "shade-amount": () => options().shade.amount,
   "kasure-amount": () => options().kasure.amount,
   "kasure-grain": () => options().kasure.grain,
+  "glow-width": () => options().glow.width,
+  "glow-spread": () => options().glow.spread,
+  "glow-core": () => options().glow.core,
   "mix-spin": () => state.mix.turns,
 };
 for (const [id, apply] of Object.entries({
   reaction: (on: boolean) => (options().reaction.on = on),
   shade: (on: boolean) => (options().shade.on = on),
   kasure: (on: boolean) => (options().kasure.on = on),
+  glow: (on: boolean) => (options().glow.on = on),
 }))
   $<HTMLInputElement>(id).onchange = () =>
     edit(() => apply($<HTMLInputElement>(id).checked));

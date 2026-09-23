@@ -68,6 +68,8 @@ uniform float brushAmount;  // kasure strength; 0 skips the effect entirely
 uniform float brushGrain;   // streak spacing in source px
 uniform float brushSeed;
 uniform float sourceScale;  // output px per source px
+uniform bool glowOn;        // light-trail halo strips are present in the mesh
+uniform float glowCore;     // overexposure: push toward white around the center
 ${colorInterpolationGLSL}
 // Dry-brush kasure: a bristle streak field in band space (s along the band,
 // v across it, both source-image px). Streaks run long in s and fine in v,
@@ -88,6 +90,15 @@ const float SHADE_AMBIENT=0.35;
 const float SHADE_DIFFUSE=0.85;
 const float SHADE_GLOSS=24.0;
 const float SHADE_SPECULAR=0.5;
+// Light-trail glow: exponential falloff exp(-GLOW_FALL*t) over the halo
+// depth t in 0..1 — a bright fringe hugging the band and a long faint tail,
+// like bloom, rather than a Gaussian's puffy fog. GLOW_EDGE is the value at
+// t=1, subtracted so the outer edge lands exactly on 0. GLOW_CORE_SHARP
+// narrows the overexposed core to a hot filament along the band's center
+// instead of paling the whole band.
+const float GLOW_FALL=6.0;
+const float GLOW_EDGE=0.0024788;
+const float GLOW_CORE_SHARP=8.0;
 void main(){
 vec4 a=texture(image,uvA);
 color=perPoint?interpolateColor(a,texture(image,uvB),uv.y):a;
@@ -108,8 +119,22 @@ float diffuse=max(dot(N,L),0.0);
 float specular=pow(max(dot(reflect(-L,N),vec3(0.0,0.0,1.0)),0.0),SHADE_GLOSS);
 color.rgb=color.rgb*mix(1.0,SHADE_AMBIENT+SHADE_DIFFUSE*diffuse,shadeAmount)+specular*SHADE_SPECULAR*shadeAmount;
 }
+if(glowOn){
+// Light-trail glow: uv.x runs -1..0 / 1..2 across the halo strips, so t is
+// the normalized halo depth. The falloff replaces the hard edge antialias —
+// the core/halo junction stays seamless because both sides sit at alpha 1.
+float t=uv.x<0.0?-uv.x:max(0.0,uv.x-1.0);
+color.a*=max((exp(-GLOW_FALL*t)-GLOW_EDGE)/(1.0-GLOW_EDGE),0.0);
+if(glowCore>0.0){
+// Overexposed filament: a narrow white push along the band's center,
+// applied after shading so the hot core stays hot.
+float w=abs(uv.x*2.0-1.0);
+color.rgb=mix(color.rgb,vec3(1.0),glowCore*exp(-GLOW_CORE_SHARP*w*w));
+}
+}else{
 float edge=max(fwidth(uv.x),0.00001);
 color.a*=smoothstep(0.0,edge,uv.x)*smoothstep(0.0,edge,1.0-uv.x);
+}
 }`;
 const frame = () =>
   new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -357,7 +382,7 @@ export class Renderer {
     const strokes = state.strokes.filter((stroke) => stroke.visible);
     // Photo-reactive options: each coefficient is 0 while its option is off,
     // which makes the shader output identical to the plain ribbon.
-    const { reaction, shade, kasure } = state.options;
+    const { reaction, shade, kasure, glow } = state.options;
     const setup = {
       displacePx:
         reaction.on && reaction.mode === "displace"
@@ -370,6 +395,8 @@ export class Renderer {
       brushAmount: kasure.on ? kasure.amount : 0,
       brushGrain: Math.max(1, kasure.grain),
       brushSeed: kasure.seed,
+      glowOn: glow.on,
+      glowCore: glow.on ? glow.core : 0,
       sourceScale: scale,
       mixMode: mixModeIndex[state.mix.mode],
       // Whole turns only: the endpoints of every interval keep their sampled color.
@@ -416,7 +443,14 @@ export class Renderer {
         // rebind the ribbon pipeline lazily so each stroke draws into working.
         if (!this.ribbonReady)
           this.ribbonSetup(state.mode === "B", setup, working, dims);
-        const verts = ribbonMesh(samples, scaled, state.mode);
+        // Glow parameters are multiples of the ribbon width, so they need no
+        // px scaling and the mesh stays resolution-independent.
+        const verts = ribbonMesh(
+          samples,
+          scaled,
+          state.mode,
+          glow.on ? { width: glow.width, spread: glow.spread } : null,
+        );
         this.uploadRibbon(verts);
         g.drawArrays(g.TRIANGLES, 0, verts.length / ribbonStride);
       }
@@ -483,6 +517,8 @@ export class Renderer {
       brushAmount: number;
       brushGrain: number;
       brushSeed: number;
+      glowOn: boolean;
+      glowCore: number;
       sourceScale: number;
       mixMode: number;
       mixSpin: number;
@@ -511,6 +547,8 @@ export class Renderer {
     g.uniform1f(this.location(p, "brushAmount"), options.brushAmount);
     g.uniform1f(this.location(p, "brushGrain"), options.brushGrain);
     g.uniform1f(this.location(p, "brushSeed"), options.brushSeed);
+    this.flag(p, "glowOn", options.glowOn);
+    g.uniform1f(this.location(p, "glowCore"), options.glowCore);
     g.uniform1f(this.location(p, "sourceScale"), options.sourceScale);
     g.uniform1i(this.location(p, "mixMode"), options.mixMode);
     g.uniform1f(this.location(p, "mixSpin"), options.mixSpin);
