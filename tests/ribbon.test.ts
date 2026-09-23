@@ -85,6 +85,53 @@ test("B mesh splits color intervals and is finite at zero widths and coincident 
   assert.equal(pointSource(s, curvePoints(s.points)[1]).angle, 30);
   assert.ok([...ribbonMesh(sampleCurve(s), s, "B")].every(Number.isFinite));
 });
+test("glow adds halo strips that clamp colors and taper along the band", () => {
+  const s = activeStroke(initialState(200, 100));
+  s.width = 30;
+  s.points = [
+    { id: "a", x: 20, y: 50, factor: 1 },
+    { id: "b", x: 180, y: 50, factor: 1 },
+  ];
+  const samples = sampleCurve(s),
+    plain = ribbonMesh(samples, s, "A"),
+    glow = ribbonMesh(samples, s, "A", { width: 1, spread: 0 });
+  // Passing null keeps the mesh byte-identical to the two-vertex layout.
+  assert.deepEqual(ribbonMesh(samples, s, "A", null), plain);
+  // Halo + core + halo: three strips per cut.
+  assert.equal(glow.length, plain.length * 3);
+  let halo = 0;
+  for (let i = 0; i < glow.length; i += ribbonStride) {
+    const strip = glow[i + 8],
+      r = glow[i + 10];
+    assert.ok(strip === -1 || strip === 0 || strip === 1 || strip === 2);
+    if (strip === -1 || strip === 2) {
+      halo++;
+      // Uniform spread, glow width 1: the halo edge sits at ±half·(1+1).
+      assert.ok(Math.abs(Math.abs(r) - 30) < 1e-4);
+      assert.equal(Math.sign(r), strip === -1 ? -1 : 1);
+    } else assert.ok(Math.abs(Math.abs(r) - 15) < 1e-4);
+    // Halo vertices reuse the clamped edge color of their side.
+    const cross = strip <= 0 ? 0 : 1;
+    const angle = (s.source.angle * Math.PI) / 180,
+      offset = (cross - 0.5) * s.source.length;
+    assert.ok(
+      Math.abs(glow[i + 4] - (s.source.x + Math.cos(angle) * offset)) < 1e-3,
+    );
+    assert.ok(
+      Math.abs(glow[i + 5] - (s.source.y + Math.sin(angle) * offset)) < 1e-3,
+    );
+  }
+  assert.ok(halo > 0);
+  // spread +1: the halo starts pinched shut and reaches ×2 at the far end.
+  const spread = ribbonMesh(samples, s, "A", { width: 1, spread: 1 });
+  const total = samples[samples.length - 1].distance;
+  for (let i = 0; i < spread.length; i += ribbonStride) {
+    const strip = spread[i + 8];
+    if (strip !== -1 && strip !== 2) continue;
+    const k = (2 * spread[i + 11]) / total; // expected halo multiplier at s
+    assert.ok(Math.abs(Math.abs(spread[i + 10]) - 15 * (1 + k)) < 1e-3);
+  }
+});
 test("C samples walk the path by band arc length, hold segments stay put", () => {
   const s = activeStroke(initialState(200, 100));
   s.width = 10;

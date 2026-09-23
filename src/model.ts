@@ -130,12 +130,26 @@ export type Options = {
     /** Fixed noise seed so redraws, history and exports reproduce exactly. */
     seed: number;
   };
+  /** Light-trail glow: a halo strip on each side of the ribbon whose edge
+   * color fades out across it, like lights smearing during a long exposure.
+   * The halo width is a multiple of the ribbon width, so it follows width
+   * edits and resolution changes without rescaling. */
+  glow: {
+    on: boolean;
+    /** Halo width as a multiple of the ribbon width, 0.1..4. */
+    width: number;
+    /** Change along the band −1..1: + diffuses toward the end, − toward the start. */
+    spread: number;
+    /** Overexposure: push the core toward white, 0..1. */
+    core: number;
+  };
 };
 export function defaultOptions(): Options {
   return {
     reaction: { on: false, mode: "displace", displaceAmount: 6, edgeAmount: 0.6 },
     shade: { on: false, amount: 0.65 },
     kasure: { on: false, amount: 0.7, grain: 8, seed: 1 },
+    glow: { on: false, width: 1, spread: 0, core: 0.5 },
   };
 }
 // Positions, source length and width use original-image pixels. Export scales the composition uniformly.
